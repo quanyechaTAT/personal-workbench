@@ -1,0 +1,1 @@
+.tool-screenshot { display: block; max-width: 100%; height: auto; max-height: 560px; object-fit: contain; object-position: left top; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-muted); }

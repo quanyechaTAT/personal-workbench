@@ -1,0 +1,15 @@
+.task-dialog { width: min(560px, calc(100vw - 36px)); }
+.task-dialog .field { margin-block: 16px; }
+.task-dialog .task-description { white-space: pre-wrap; }
+.task-dialog .cleanup-option { display: flex; align-items: center; gap: 8px; margin-block: 16px; }
+.task-dialog .cleanup-option input { width: auto; }
+.cleanup-preview { max-height: 180px; overflow: auto; font-size: 13px; padding-left: 22px; }
+.cleanup-preview li { margin-bottom: 6px; }
+.task-execution-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+.task-execution-actions .button { padding: 5px 9px; font-size: 12px; }
+.task-execution-link { color: var(--accent); white-space: nowrap; }
+.project-start-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.project-start-controls label { display: grid; gap: 6px; font-size: 12px; }
+.project-source-tabs { display: flex; flex-wrap: wrap; gap: 12px; padding-bottom: 12px; }
+.project-source-note { color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
+.project-hero code { overflow-wrap: anywhere; }

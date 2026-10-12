@@ -1,0 +1,22 @@
+.usage-meter { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 20px; font-size: 12px; color: var(--text-soft); margin-top: 8px; }
+.usage-meter details { position: relative; }
+.usage-meter summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.usage-meter summary::-webkit-details-marker { display: none; }
+.usage-meter svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; flex-shrink: 0; }
+.usage-meter details[open] dl { position: absolute; bottom: 24px; z-index: 12; min-width: 210px; padding: 14px; margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; background: var(--panel-raised); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 24px #0002; }
+.usage-meter dd { margin: 0; font-variant-numeric: tabular-nums; }
+.usage-context-wrap { position: relative; }
+.usage-context { display: inline-flex; gap: 6px; align-items: center; color: inherit; padding: 3px 0; border: 0; background: transparent; font: inherit; cursor: help; }
+.usage-context-tooltip { position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 30; min-width: 250px; padding: 14px; display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-raised); box-shadow: 0 6px 24px #0002; color: var(--text); opacity: 0; visibility: hidden; pointer-events: none; }
+.usage-context-wrap:hover .usage-context-tooltip, .usage-context-wrap:focus-within .usage-context-tooltip { opacity: 1; visibility: visible; }
+.usage-context-tooltip small { color: var(--text-soft); line-height: 1.5; }
+.usage-compact { border: 0; background: transparent; color: inherit; font: inherit; padding: 3px 0; cursor: pointer; }
+.usage-compact:hover { color: var(--text); text-decoration: underline; }
+.usage-compact:disabled { opacity: .5; cursor: default; }
+.usage-circle-track { opacity: .25; }
+.usage-circle-fill { transform: rotate(-90deg); transform-origin: center; stroke-width: 2.5; }
+@media (max-width: 560px) {
+	.usage-meter { gap: 8px 16px; }
+	.usage-meter details, .usage-context-wrap { position: static; }
+	.usage-context-tooltip, .usage-meter details[open] dl { left: 0; right: auto; bottom: calc(100% + 10px); min-width: 0; width: min(280px, 100%); }
+}

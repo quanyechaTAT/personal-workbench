@@ -1,0 +1,10 @@
+.message-usage {
+	display: block;
+	margin-top: 10px;
+	color: var(--text-soft);
+	font-size: 11px;
+	line-height: 1.5;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}

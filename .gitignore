@@ -1,0 +1,102 @@
+# Dependencies, generated output and local caches
+node_modules/
+.npm-cache/
+.npm/
+.cache/
+dist/
+.artifacts/
+*.tsbuildinfo
+packages/*/dist/
+packages/*/dist-chrome/
+packages/*/dist-firefox/
+packages/ai/src/providers/data/
+packages/ai/src/providers/.model-generation-*/
+# Tests, logs and profiling
+playwright-report/
+blob-report/
+playwright/.cache/
+test-results/
+coverage/
+.nyc_output/
+*.log
+*.cpuprofile
+*.har
+
+# Secrets and environment overrides; templates belong in Git
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+.envrc
+.envrc.local
+# Keep the repository .npmrc shareable; ignore local credential/config variants.
+.npmrc.local
+.npmrc.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Workbench local state; never publish user workspaces or conversations
+.workbench-start.json
+.workbench-start.json.*.tmp
+**/.personal-workbench/
+/workbench-data/
+/workspace/
+/state/
+/credentials/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Project documentation and validation materials stay local
+/docs/
+
+# Pi local credentials and sessions; keep checked-in .pi extensions/skills
+**/.pi/agent/
+**/.pi/auth.json
+**/.pi/settings.json
+**/.pi/models.json
+**/.pi/sessions/
+**/.pi/cache/
+**/.pi/logs/
+**/.pi/tmp/
+.pi_config/
+.pi/hf-sessions/
+.pi/hf-sessions-backup/
+
+# Codex credentials and local histories; keep project instructions shareable
+**/.codex/auth.json
+**/.codex/sessions/
+**/.codex/cache/
+**/.codex/log/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.zed/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# Upstream package-specific local outputs
+tui-debug.log
+compaction-results/
+.opencode/
+syntax.jsonl
+out.jsonl
+pi-*.html
+out.html
+packages/coding-agent/binaries/
+todo.md
+plans/
+collect.sh
+packages/agent/docs/extensions/pi-server-artifact/index.md

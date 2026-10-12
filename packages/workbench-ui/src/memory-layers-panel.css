@@ -1,0 +1,14 @@
+.memory-state-panel, .memory-manifest { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.memory-state-panel p, .memory-manifest p { line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
+.memory-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.memory-actions label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.memory-state-panel input { padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-width: 100%; color: var(--text); }
+.memory-state-panel dt { color: var(--text-soft); font-size: 12px; }
+.memory-state-panel dd { margin: 8px 0 14px; font-size: 13px; }
+.memory-state-panel details, .memory-manifest details { border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow-wrap: anywhere; }
+.memory-evidence small, .memory-manifest small { color: var(--text-soft); font-size: 11px; }
+.memory-manifest pre, .memory-state-panel pre, .memory-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font: 12px/1.7 monospace; }
+.memory-evidence { margin-top: 10px; }
+.memory-evidence details { margin: 8px 0; font-size: 11px; }
+.memory-actions button, .memory-evidence button { padding: 6px 10px; background: var(--panel-muted); color: var(--text); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.memory-actions button:disabled { opacity: .5; cursor: default; }

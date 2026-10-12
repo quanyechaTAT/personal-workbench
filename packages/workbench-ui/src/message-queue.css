@@ -1,0 +1,17 @@
+.message-queue { border: 1px solid var(--border); border-radius: 12px; background: var(--panel-muted); margin: 0 0 10px; overflow: hidden; font-size: 12px; }
+.queue-heading { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 0; background: transparent; text-align: left; }
+.queue-heading small { margin-left: auto; color: var(--text-faint); }
+.queue-list { max-height: 210px; overflow-y: auto; }
+.queue-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.queue-row + .queue-row { border-top: 1px solid var(--border); }
+.queue-row > svg { flex: 0 0 auto; width: 16px; color: var(--text-faint); }
+.queue-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-actions { display: flex; gap: 4px; }
+.queue-actions button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--text-soft); background: transparent; }
+.queue-actions button:hover { background: var(--panel-raised); color: var(--accent); }
+.queue-actions button:disabled { opacity: .45; cursor: default; }
+.queue-actions svg { width: 15px; }
+.queue-editor { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.queue-editor textarea { width: 100%; min-height: 64px; resize: vertical; padding: 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--panel); }
+.composer-steer { flex: 0 0 auto; align-self: center; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; background: var(--panel-raised); color: var(--text-soft); font-size: 11px; }
+.composer-steer:disabled { opacity: .45; cursor: default; }

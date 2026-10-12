@@ -1,0 +1,12 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"paths": {
+			"@earendil-works/workbench-core": ["../workbench-core/dist/index.d.ts"],
+			"@earendil-works/workbench-runtime": ["../workbench-runtime/dist/index.d.ts"]
+		}
+	},
+	"include": ["src/**/*.ts"]
+}

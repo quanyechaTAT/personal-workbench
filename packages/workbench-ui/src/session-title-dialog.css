@@ -1,0 +1,5 @@
+.session-title-dialog { width: min(440px, calc(100vw - 36px)); max-height: calc(100dvh - 36px); overflow: auto; margin: auto; padding: 24px; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--panel-raised); color: var(--text); box-shadow: var(--shadow); }
+.session-title-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.session-title-dialog h2 { margin: 0 0 20px; font-size: 18px; }
+.session-title-dialog p { font-size: 12px; color: var(--text-soft); line-height: 1.7; }
+.session-title-dialog .card-actions { justify-content: flex-end; }

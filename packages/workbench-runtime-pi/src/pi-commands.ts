@@ -1,0 +1,85 @@
+import type { RuntimeSlashCommand } from "@earendil-works/workbench-runtime";
+
+/** Names audited against Pi core/slash-commands.ts; implementations use only public SDK methods. */
+export const PI_WORKBENCH_COMMANDS: readonly RuntimeSlashCommand[] = [
+	{ name: "settings", description: "打开工作台设置", action: "settings" },
+	{ name: "model", description: "选择已添加的模型", argumentHint: "<provider/model>", action: "model" },
+	{
+		name: "tree",
+		description: "浏览 Pi 会话分支树",
+		action: "unsupported",
+		unavailableReason: "当前网页尚未提供分支树界面，请在 Pi CLI 中使用 /tree。",
+	},
+	{
+		name: "thinking",
+		description: "选择思考强度",
+		argumentHint: "<off|minimal|low|medium|high|xhigh|max>",
+		action: "thinking",
+	},
+	{ name: "scoped-models", description: "管理已添加和启用的模型", action: "settings" },
+	{
+		name: "export",
+		description: "下载当前会话（默认 HTML，也支持 JSONL）",
+		argumentHint: "[html|jsonl]",
+		action: "export",
+		requiresSession: true,
+	},
+	{
+		name: "import",
+		description: "导入 Pi JSONL 会话",
+		action: "unsupported",
+		unavailableReason: "当前网页尚未提供外部 JSONL 导入，请在 Pi CLI 中使用 /import。",
+	},
+	{
+		name: "share",
+		description: "发布会话到 GitHub secret gist",
+		action: "unsupported",
+		unavailableReason: "网页不发布会话到外部服务。可用 /export 下载，再自行决定如何分享。",
+	},
+	{ name: "copy", description: "复制最后一条助手回复", action: "copy", requiresSession: true },
+	{ name: "name", description: "设置会话名称", argumentHint: "<名称>", action: "name", requiresSession: true },
+	{ name: "session", description: "查看当前会话消息数、Token 和费用", action: "session", requiresSession: true },
+	{
+		name: "changelog",
+		description: "查看 Pi 版本变更",
+		action: "unsupported",
+		unavailableReason: "Pi 版本变更请查看仓库 packages/coding-agent/CHANGELOG.md 或在 Pi CLI 中使用 /changelog。",
+	},
+	{ name: "hotkeys", description: "查看网页快捷键", action: "hotkeys" },
+	{
+		name: "fork",
+		description: "从历史消息创建分支会话",
+		action: "unsupported",
+		unavailableReason: "当前网页尚未提供分支会话操作，请在 Pi CLI 中使用 /fork。",
+	},
+	{
+		name: "clone",
+		description: "复制当前 Pi 会话",
+		action: "unsupported",
+		unavailableReason: "当前网页尚未提供 Pi 历史复制，请在 Pi CLI 中使用 /clone。",
+	},
+	{
+		name: "trust",
+		description: "保存 Pi 项目信任决定",
+		action: "unsupported",
+		unavailableReason: "网页使用会话权限模式管理操作批准。Pi CLI 项目信任不能代替工作台权限。",
+	},
+	{ name: "login", description: "打开模型供应商与凭证设置", argumentHint: "[provider]", action: "settings" },
+	{ name: "logout", description: "打开供应商设置以停用或移除配置", action: "settings" },
+	{ name: "new", description: "命名并创建新会话，保留原会话", action: "new" },
+	{
+		name: "compact",
+		description: "调用 Pi 压缩当前会话上下文",
+		argumentHint: "[压缩说明]",
+		action: "compact",
+		requiresSession: true,
+	},
+	{ name: "resume", description: "选择并继续已保存的会话", action: "resume" },
+	{ name: "reload", description: "重载当前会话的指令、技能和工具配置", action: "reload", requiresSession: true },
+	{
+		name: "quit",
+		description: "退出 Pi 终端",
+		action: "unsupported",
+		unavailableReason: "关闭网页不会停止其他会话。退出工作台请在 start.bat 终端按 Ctrl+C。",
+	},
+];

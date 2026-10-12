@@ -1,0 +1,6 @@
+.project-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.project-card-actions .project-open { color: var(--accent); }
+.project-delete-dialog p { line-height: 1.7; overflow-wrap: anywhere; }
+.project-delete-dialog code { font-size: 12px; }
+.project-delete-icon { color: var(--text-soft); }
+.project-delete-icon:hover { color: var(--danger); }

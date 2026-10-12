@@ -1,0 +1,35 @@
+.session-sidebar .new-chat-button {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--border-strong);
+	border-radius: 8px;
+	background: var(--panel-raised);
+	text-align: left;
+	font-size: 13px;
+}
+.new-chat-button:hover, .project-session-heading:hover { background: var(--panel-muted); }
+.new-chat-button svg { width: 16px; height: 16px; color: var(--text-soft); }
+.new-chat-button:disabled { opacity: .5; }
+.grouped-session-list { padding-top: 4px; }
+.session-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 0 7px; }
+.session-section-heading h3 { margin: 0; font-size: 12px; font-weight: 500; color: var(--text-faint); }
+.session-section-heading .icon-button, .project-session-heading .icon-button { width: 28px; height: 28px; flex: 0 0 auto; }
+.project-session-group { margin-bottom: 12px; }
+.project-session-heading { display: flex; align-items: center; border-radius: 8px; min-height: 34px; }
+.project-group-toggle { width: 22px; flex: 0 0 auto; padding: 4px 2px; display: grid; place-items: center; border: 0; background: transparent; color: var(--text-faint); }
+.project-group-toggle svg { width: 13px; height: 13px; }
+.project-group-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.project-group-name { display: flex; align-items: center; flex: 1; min-width: 0; gap: 8px; font-size: 13px; padding: 8px 0; }
+.project-group-name > svg { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-soft); }
+.project-group-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-group-name:focus-visible, .project-group-toggle:focus-visible, .new-chat-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.project-session-items { padding-left: 17px; }
+.project-session-items .session-item { grid-template-columns: minmax(0, 1fr) 7px; gap: 6px; padding-top: 8px; padding-bottom: 8px; }
+.project-session-items .session-item .session-icon { display: none; }
+.session-group-empty { padding: 8px 9px; margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.7; }
+.ordinary-session-group { margin-top: 20px; }
+.sidebar-project-picker { display: flex; align-items: flex-start; flex-direction: column; gap: 7px; padding: 8px; font-size: 11px; color: var(--text-soft); }
+.sidebar-project-picker .button { padding: 4px 8px; font-size: 11px; }

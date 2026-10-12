@@ -1,0 +1,5 @@
+.chat-command-result { padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-raised); }
+.chat-command-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; max-height: 200px; overflow: auto; margin: 8px 0; }
+.chat-command-result header { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.chat-command-sessions { max-height: 220px; overflow: auto; display: grid; gap: 6px; }
+.chat-command-sessions button { text-align: left; }

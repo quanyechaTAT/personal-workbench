@@ -1,0 +1,75 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { expect, test } from "@playwright/test";
+import { createPerceptionFixture, imageDocument, scannedDocument, wavDocument } from "../../workbench-server/test/perception-fixture.ts";
+import { LEARNED_FACT, reviewOutput } from "../../workbench-server/test/project-learning-fixture.ts";
+
+test("four layers close the browser loop: two sessions, originals, automatically learned facts/Skill, compaction and same Pi restart", async ({ page }) => {
+	const setup = await createPerceptionFixture(fileURLToPath(new URL("../dist", import.meta.url)));
+	const fixture = setup.fixture; const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+	try {
+		const project = await setup.project("四层记忆 中文 空格");
+		await fixture.application.services.knowledge.configure(project, { maxChunkTokens: 256, minChunkTokens: 16, contextTokens: 2048, queryTokens: 512, mqe: "off", mqeTimeoutMs: 3000 });
+		const legacy = await fixture.application.services.memory.propose({ project }, { kind: "project", proposedText: "项目使用 Python 3.10。", reason: "旧项目版本" }); await fixture.application.services.memory.accept(legacy.id);
+		const previous = (await fixture.application.services.semantic.list({ project })).find((fact) => fact.text.includes("3.10"))!;
+		await fixture.application.services.learning.configure(project.id, { memoryInterval: 1, skillInterval: 0 });
+		await page.goto(fixture.address.launchUrl); await page.goto(`${fixture.address.origin}/projects/${project.id}/knowledge`);
+		await page.getByLabel("上传知识文档").setInputFiles([{ name: "项目文档.txt", mimeType: "text/plain", buffer: Buffer.from("星辰项目将验证 Python 3.12，并保留原始资料。") }, { name: "版本截图.png", mimeType: "image/png", buffer: imageDocument() }, { name: "扫描版本.pdf", mimeType: "application/pdf", buffer: scannedDocument() }, { name: "迁移录音.wav", mimeType: "audio/wav", buffer: wavDocument() }]);
+		await expect(page.locator(".knowledge-stage.ready")).toHaveCount(4);
+		await page.getByRole("button", { name: /版本截图.png/ }).click();
+		await page.locator(".knowledge-preview .perception-source").filter({ hasText: "图片区域" }).first().click();
+		await expect(page.getByRole("img", { name: "OCR 文字区域" })).toBeVisible();
+		await page.getByRole("button", { name: /扫描版本.pdf/ }).click();
+		await page.locator(".knowledge-preview .perception-source").filter({ hasText: "第 1 页" }).first().click();
+		await expect(page.getByRole("link", { name: "打开原始 PDF · 第 1 页" })).toBeVisible();
+		await page.getByRole("button", { name: /迁移录音.wav/ }).click();
+		await page.locator(".knowledge-preview .perception-source").filter({ hasText: "0.12" }).first().click();
+		await expect(page.getByRole("button", { name: /播放 0.12 秒/ })).toBeVisible();
+		await page.getByLabel("检索项目资料").fill("星辰 Python 3.12"); await page.getByRole("button", { name: "检索", exact: true }).click();
+		await expect(page.locator(".knowledge-results")).toContainText("录音确认");
+		await page.goto(`${fixture.address.origin}/projects/${project.id}`);
+		const standard = await fixture.application.services.profiles.getBySlug("standard"); await page.getByLabel("启动助手预设").selectOption(standard.id); await page.getByRole("button", { name: "启动助手", exact: true }).click();
+		fixture.faux.setResponses([fauxAssistantMessage(fauxToolCall("ls", { path: "." }), { stopReason: "toolUse" }), fauxAssistantMessage("已完成项目目录检查；OCR 服务权限仍未验证。"), (context) => {
+			const output = reviewOutput(context);
+			output.memories[0].change = { operation: "supersede", targetId: previous.id, expectedVersion: previous.version };
+			return fauxAssistantMessage(JSON.stringify(output));
+		}]);
+		const input = page.getByRole("textbox", { name: "消息输入" }); await input.fill(`记住：${LEARNED_FACT} 请检查项目目录。\n约束：不要提交`); await page.getByRole("button", { name: "发送消息", exact: true }).click();
+		await expect(page.locator(".toolbar-state")).toHaveText("就绪");
+		await expect(page).toHaveURL(/session=/); const firstId = new URL(page.url()).searchParams.get("session")!;
+		await expect.poll(async () => (await fixture.application.services.learning.list(project.id))[0]?.changes.map((change) => change.status)).toEqual(["applied", "applied"]);
+		await fixture.application.services.learning.configure(project.id, { memoryInterval: 0, skillInterval: 0 });
+		await page.getByRole("button", { name: `新建项目会话 ${project.name}`, exact: true }).click(); await page.getByRole("combobox", { name: "新会话助手" }).selectOption(standard.id); await page.getByRole("button", { name: "开始对话", exact: true }).click();
+		await expect.poll(async () => (await fixture.application.services.learning.list(project.id))[0]?.status).toBe("ready");
+		fixture.faux.setResponses([fauxAssistantMessage("乙会话只检查音频权限。")]); await input.fill("会话乙目标：检查音频权限"); await page.getByRole("button", { name: "发送消息", exact: true }).click(); await expect(page.locator(".toolbar-state")).toHaveText("就绪");
+		await expect(page).toHaveURL(/session=/); const secondId = new URL(page.url()).searchParams.get("session")!; expect(secondId).not.toBe(firstId);
+		expect((await fixture.application.services.memoryState.checkpoint(secondId))?.goal).toContain("会话乙"); expect((await fixture.application.services.memoryState.checkpoint(firstId))?.goal).not.toContain("会话乙");
+		await page.goto(`${fixture.address.origin}/projects/${project.id}/files`);
+		if (project.sourcePath) await page.getByRole("button", { name: "工作台资料", exact: true }).click();
+		await page.locator(".file-row").filter({ hasText: /^skills/u }).click();
+		await page.locator(".file-row").filter({ hasText: "learned-inspect-project" }).click();
+		await page.locator(".file-row").filter({ hasText: "SKILL.md" }).click();
+		await expect(page.locator(".markdown-preview")).toContainText("核对工具返回的真实文件名");
+		const first = await fixture.application.services.sessions.get(firstId);
+		await writeFile(join(fixture.root, "pi-agent", "settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 1 } }));
+		const manager = SessionManager.open(first.runtimeRef); manager.appendMessage({ role: "user", content: "项目历史资料 ".repeat(900), timestamp: Date.now() }); manager.appendMessage({ ...fauxAssistantMessage("历史记录 ".repeat(500)), provider: fixture.model.provider, model: fixture.model.id, api: fixture.model.api });
+		await fixture.application.services.sessions.resume(firstId, (await fixture.application.contextForSession(firstId)).runtime);
+		fixture.faux.setResponses([(context) => { expect(JSON.stringify(context)).toContain("不要提交"); return fauxAssistantMessage("已保留项目目标、目录检查结果和未验证权限；接着验证版本。" ); }]);
+		await page.goto(`${fixture.address.origin}/projects/${project.id}/chat?session=${firstId}`); await input.fill("/compact"); await page.getByRole("button", { name: "发送消息", exact: true }).click(); await expect(page.getByRole("region", { name: "命令结果" })).toContainText("压缩");
+		await fixture.restart(); await page.goto(fixture.address.launchUrl); await page.goto(`${fixture.address.origin}/projects/${project.id}/chat?session=${firstId}`);
+		expect((await fixture.application.services.sessions.get(firstId)).runtimeSessionId).toBe(first.runtimeSessionId);
+		fixture.faux.setResponses([(context) => {
+			expect(context.systemPrompt).toContain("3.12"); expect(context.systemPrompt).toContain("learned-inspect-project"); expect(context.systemPrompt).toContain("OCR"); expect(context.systemPrompt).not.toContain("3.10"); const text = JSON.stringify(context.messages); expect(text).toContain("不要提交"); expect(text).not.toContain("会话乙目标"); return fauxAssistantMessage("恢复同一会话，引用历史目录经历与截图和录音，继续核对 Python 3.12。");
+		}]);
+		await input.fill("继续核对 Python 版本，结合历史经历和星辰截图、录音"); await page.getByRole("button", { name: "发送消息", exact: true }).click(); await expect(page.locator(".conversation-scroll")).toContainText("恢复同一会话"); await expect(page.locator(".toolbar-state")).toHaveText("就绪");
+		await page.getByRole("button", { name: "会话详情", exact: true }).click(); await expect(page.getByRole("region", { name: "本轮实际记忆上下文" })).toContainText("3.12"); await expect(page.getByRole("heading", { name: "当前工作检查点" })).toBeVisible();
+		await page.goto(`${fixture.address.origin}/memory`); await expect(page.getByRole("heading", { name: "四层记忆" })).toHaveCount(0); await expect(page.locator(".memory-library")).toBeVisible();
+		const facts = await fixture.application.services.semantic.list({ project }, true);
+		expect(facts.find((fact) => fact.id === previous.id)?.status).toBe("superseded");
+		expect(facts.some((fact) => fact.text.includes("3.12") && fact.status === "active")).toBe(true);
+		expect(errors).toEqual([]);
+	} finally { await setup.close(); }
+});

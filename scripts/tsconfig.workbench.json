@@ -1,0 +1,5 @@
+{
+	"extends": "../tsconfig.json",
+	"include": ["../packages/workbench-*/src/**/*.ts", "../packages/workbench-*/test/**/*.ts", "../packages/coding-agent/src/**/*.d.ts"],
+	"exclude": ["../packages/workbench-ui/**", "**/dist/**"]
+}
