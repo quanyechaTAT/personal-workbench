@@ -1,7 +1,47 @@
-import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { PathPolicy, SessionWorkspaceService, WorkbenchPaths, WorkspaceManager } from "@earendil-works/workbench-core";
 import { expect, test } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
+
+test.runIf(process.platform === "win32")(
+	"Windows short paths remain usable without accepting directory junctions",
+	async (context) => {
+		const fixture = await createAssistantFixture();
+		try {
+			const { stdout } = await promisify(execFile)(
+				"powershell.exe",
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					"(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:WORKBENCH_TEST_PATH).ShortPath",
+				],
+				{ env: { ...process.env, WORKBENCH_TEST_PATH: fixture.root } },
+			);
+			const shortRoot = stdout.trim();
+			if (shortRoot.toLowerCase() === (await realpath(fixture.root)).toLowerCase())
+				context.skip("8.3 names are disabled on this volume");
+			const paths = new WorkbenchPaths(join(shortRoot, "short-path-data"));
+			await new WorkspaceManager(paths).initialize();
+			const workspaces = new SessionWorkspaceService(
+				paths,
+				new PathPolicy(paths),
+				fixture.application.services.settings,
+			);
+			const path = await workspaces.ensure("short-path-session");
+			expect(JSON.parse(await readFile(join(path, ".workbench-session.json"), "utf8"))).toMatchObject({
+				sessionId: "short-path-session",
+			});
+			await symlink(path, join(paths.workspace, "chats", "linked-session"), "junction");
+			await expect(workspaces.ensure("linked-session")).rejects.toMatchObject({ code: "path_denied" });
+		} finally {
+			await fixture.close();
+		}
+	},
+);
 
 test("every session owns a directory; deletion migrates, retains or deletes it without touching project sources", async () => {
 	const fixture = await createAssistantFixture();

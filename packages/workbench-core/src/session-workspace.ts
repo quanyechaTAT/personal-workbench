@@ -1,5 +1,5 @@
 import { lstat, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { WorkbenchError } from "./errors.ts";
 import type { WorkbenchSession } from "./models.ts";
 import type { SettingsService } from "./settings-service.ts";
@@ -94,10 +94,20 @@ export class SessionWorkspaceService {
 	}
 	private async checked(path: string): Promise<string> {
 		const target = await this.policy.requireWorkspace(path);
-		const normalize = (value: string) =>
-			process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
-		if (normalize(target.absolutePath) !== normalize(target.realPath))
-			throw new WorkbenchError("path_denied", "会话工作区不能通过链接迁移或删除");
+		// An 8.3 alias can resolve to a different spelling without being a link.
+		// Inspect every ancestor so junctions remain forbidden, including on missing targets.
+		let current = target.absolutePath;
+		while (true) {
+			const metadata = await lstat(current).catch((error: unknown) => {
+				if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+					return undefined;
+				throw error;
+			});
+			if (metadata?.isSymbolicLink()) throw new WorkbenchError("path_denied", "会话工作区不能通过链接迁移或删除");
+			const parent = dirname(current);
+			if (parent === current) break;
+			current = parent;
+		}
 		return target.absolutePath;
 	}
 	private async checkTree(path: string): Promise<void> {

@@ -202,15 +202,31 @@ test("network-disabled sandbox blocks an otherwise reachable public documentatio
 	try {
 		const command =
 			"$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri https://learn.chatgpt.com/docs/sandboxing | Select-Object -ExpandProperty StatusCode";
-		const reachable = await baseline.start(command, 10_000);
-		expect(reachable.exit_code, reachable.output).toBe(0);
-		expect(reachable.output).toContain("200");
-		const result = await terminals.start(command, 10_000);
-		expect(result.exit_code, result.output).not.toBe(0);
+		for (const [runner, allowed] of [
+			[baseline, true],
+			[terminals, false],
+		] as const) {
+			let result = await runner.start(command, 0);
+			let output = result.output;
+			await vi.waitFor(
+				async () => {
+					if (result.status === "running") {
+						result = await runner.read(result.session_id, "", 250);
+						output += result.output;
+					}
+					expect(result.status, output).toBe("exited");
+				},
+				{ timeout: 15_000 },
+			);
+			if (allowed) {
+				expect(result.exit_code, output).toBe(0);
+				expect(output).toContain("200");
+			} else expect(result.exit_code, output).not.toBe(0);
+		}
 	} finally {
 		await baseline.dispose();
 		await terminals.dispose();
 		expect(dirname(root)).toBe(tmpdir());
 		await rm(root, { recursive: true, force: true, maxRetries: 5 });
 	}
-}, 30_000);
+}, 45_000);

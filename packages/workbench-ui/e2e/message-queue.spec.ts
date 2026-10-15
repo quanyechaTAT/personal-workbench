@@ -3,7 +3,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat
 import { expect, test } from "@playwright/test";
 import { createAssistantFixture } from "../../workbench-server/test/assistant-fixture.ts";
 
-const staticRoot = process.env.WORKBENCH_UI_TEST_STATIC_ROOT ?? fileURLToPath(new URL("../dist/public", import.meta.url));
+const staticRoot = process.env.WORKBENCH_UI_TEST_STATIC_ROOT ?? fileURLToPath(new URL("../dist", import.meta.url));
 
 test("queued messages restore after reload and support edit, removal and immediate steering", async ({ page }) => {
 	const fixture = await createAssistantFixture(staticRoot);

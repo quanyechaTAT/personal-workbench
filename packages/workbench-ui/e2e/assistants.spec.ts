@@ -101,7 +101,7 @@ test("create assistant, import Skill, authorize MCP, run project workflow, resta
 		await page.getByRole("link", { name: "记忆", exact: true }).first().click();
 		await page.getByRole("button", { name: "接受", exact: true }).click();
 		await expect.poll(async () => (await fixture.application.services.memory.listCandidates())[0]?.status).toBe("accepted");
-		expect(await readFile(join(project.workspacePath, "MEMORY.md"), "utf8")).toContain("classification");
+		expect(await readFile(project.memoryFilePath, "utf8")).toContain("classification");
 		await fixture.restart();
 		await page.goto(fixture.address.launchUrl);
 		await page.goto(`${fixture.address.origin}/chat?session=${sessionId}`);

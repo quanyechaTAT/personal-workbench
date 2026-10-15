@@ -23,6 +23,9 @@ test("Pi commands perform real session operations without becoming prompts and r
 		await expect(menu).not.toContainText("task_list");
 		await page.screenshot({ path: "test-results/pi-slash-menu.png" });
 		await input.press("Escape");
+		await submit("/new");
+		await page.getByRole("combobox", { name: "新会话助手" }).selectOption((await fixture.application.services.profiles.getBySlug("standard")).id);
+		await page.getByRole("button", { name: "开始对话", exact: true }).click();
 		await submit("/new 命令创建的会话");
 		await expect(page.locator(".session-item.selected")).toContainText("命令创建的会话");
 		const id = new URL(page.url()).searchParams.get("session")!;
@@ -93,6 +96,7 @@ test("the seven-row thinking editor controls chat options and the actual payload
 		const saved = await fixture.application.services.modelSettings.get();
 		const provider = saved.providers.find((entry) => entry.name === "档位供应商")!;
 		await page.getByRole("link", { name: "对话", exact: true }).first().click();
+		await page.getByRole("combobox", { name: "助手", exact: true }).selectOption((await fixture.application.services.profiles.getBySlug("standard")).id);
 		await page.getByRole("combobox", { name: "模型", exact: true }).selectOption(`${provider.id}/deepseek-flash`);
 		const thinking = page.getByRole("combobox", { name: "思考强度", exact: true });
 		expect(await thinking.locator("option").evaluateAll((items) => items.map((item) => item.getAttribute("value")))).toEqual(["none", "high", "max"]);

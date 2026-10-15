@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { createAssistantFixture } from "../../workbench-server/test/assistant-fixture.ts";
 
-test("Workspace has two global memories and one project AGENTS document editable from both Files and Memory", async ({ page }) => {
+test("Workspace keeps global MEMORY, root USER and one project AGENTS document editable from Files and Memory", async ({ page }) => {
 	const fixture = await createAssistantFixture(fileURLToPath(new URL("../dist", import.meta.url)));
 	const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
 	try {
@@ -12,9 +12,12 @@ test("Workspace has two global memories and one project AGENTS document editable
 		await fixture.application.services.memory.accept(candidate.id);
 		await page.goto(fixture.address.launchUrl); await page.goto(`${fixture.address.origin}/files`);
 		await expect(page.locator(".file-list").getByRole("button", { name: /MEMORY\.md/ })).toBeVisible();
-		await expect(page.locator(".file-list").getByRole("button", { name: /USER\.md/ })).toBeVisible();
+		await expect(page.locator(".file-list").getByRole("button", { name: /USER\.md/ })).toHaveCount(0);
 		await expect(page.locator(".file-list").getByRole("button", { name: /(?:AGENTS|IDENTITY)\.md/ })).toHaveCount(0);
 		await page.screenshot({ path: "test-results/workspace-canonical-global.png" });
+		await page.goto(`${fixture.address.origin}/memory`);
+		await page.locator(".memory-library aside").getByRole("button", { name: /工作台根目录 \/ USER.md/u }).click();
+		await expect(page.locator(".memory-library section textarea")).toHaveValue(/User Memory/u);
 		await page.goto(`${fixture.address.origin}/projects/${project.id}/files`);
 		await expect(page.locator(".file-list").getByRole("button", { name: /AGENTS\.md/ })).toBeVisible();
 		await expect(page.locator(".file-list").getByRole("button", { name: /(?:PROJECT|MEMORY)\.md/ })).toHaveCount(0);

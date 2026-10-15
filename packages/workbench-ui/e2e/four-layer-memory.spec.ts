@@ -5,7 +5,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { expect, test } from "@playwright/test";
 import { createPerceptionFixture, imageDocument, scannedDocument, wavDocument } from "../../workbench-server/test/perception-fixture.ts";
-import { LEARNED_FACT, reviewOutput } from "../../workbench-server/test/project-learning-fixture.ts";
+import { LEARNED_FACT, reviewOutput, similarityResponse } from "../../workbench-server/test/project-learning-fixture.ts";
 
 test("four layers close the browser loop: two sessions, originals, automatically learned facts/Skill, compaction and same Pi restart", async ({ page }) => {
 	const setup = await createPerceptionFixture(fileURLToPath(new URL("../dist", import.meta.url)));
@@ -36,7 +36,7 @@ test("four layers close the browser loop: two sessions, originals, automatically
 			const output = reviewOutput(context);
 			output.memories[0].change = { operation: "supersede", targetId: previous.id, expectedVersion: previous.version };
 			return fauxAssistantMessage(JSON.stringify(output));
-		}]);
+		}, (context) => similarityResponse(context, "related")]);
 		const input = page.getByRole("textbox", { name: "消息输入" }); await input.fill(`记住：${LEARNED_FACT} 请检查项目目录。\n约束：不要提交`); await page.getByRole("button", { name: "发送消息", exact: true }).click();
 		await expect(page.locator(".toolbar-state")).toHaveText("就绪");
 		await expect(page).toHaveURL(/session=/); const firstId = new URL(page.url()).searchParams.get("session")!;

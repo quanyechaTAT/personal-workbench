@@ -61,6 +61,8 @@ test("named sessions can be renamed, survive restart and work in a small project
 		await page.getByRole("textbox", { name: "消息输入" }).fill("CV 学习计划");
 		await page.getByRole("button", { name: "发送消息", exact: true }).click();
 		await expect.poll(async () => (await fixture.application.services.sessions.list()).length).toBe(2);
+		await expect(page.locator(".conversation-scroll")).toContainText("学习计划已记录");
+		await expect(page).toHaveURL(/session=/);
 		await expect.poll(() => new URL(page.url()).searchParams.get("session")).not.toBe(previous.id);
 		await page.reload();
 		await expect(page.locator(".session-item")).toHaveCount(2);
@@ -86,6 +88,7 @@ test("named sessions can be renamed, survive restart and work in a small project
 		await page.getByRole("textbox", { name: "消息输入" }).fill("项目第二次研究");
 		await page.getByRole("button", { name: "发送消息", exact: true }).click();
 		await expect.poll(async () => (await fixture.application.services.sessions.list(project.id)).length).toBe(2);
+		await expect(page.locator(".conversation-scroll")).toContainText("研究记录已创建");
 		await page.locator(".compact-session-actions summary").click();
 		await page.getByRole("button", { name: "重命名会话", exact: true }).filter({ visible: true }).click();
 		await page.getByRole("textbox", { name: "会话名称", exact: true }).fill("窄窗口重命名");
@@ -189,11 +192,13 @@ test("session archive, restore and confirmed delete work in the browser and surv
 		await expect(page.getByRole("textbox", { name: "消息输入" })).toBeEnabled();
 		await expect(page.locator(".session-item")).toHaveCount(1);
 		await page.getByRole("button", { name: "会话操作 会话管理测试" }).click();
-		page.once("dialog", (dialog) => dialog.dismiss());
 		await page.getByRole("button", { name: "删除会话", exact: true }).filter({ visible: true }).click();
+		const deletion = page.getByRole("dialog", { name: "删除会话", exact: true });
+		await expect(deletion.getByRole("combobox", { name: "会话工作区" })).toHaveValue("migrate");
+		await deletion.getByRole("button", { name: "取消", exact: true }).click();
 		await expect(page.locator(".session-item")).toHaveCount(1);
-		page.once("dialog", (dialog) => dialog.accept());
 		await page.getByRole("button", { name: "删除会话", exact: true }).filter({ visible: true }).click();
+		await deletion.getByRole("button", { name: "确认删除", exact: true }).click();
 		await expect(page.locator(".session-item")).toHaveCount(0);
 		await fixture.restart();
 		await page.goto(fixture.address.launchUrl);

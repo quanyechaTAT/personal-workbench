@@ -3,7 +3,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat
 import { expect, test } from "@playwright/test";
 import { createAssistantFixture } from "../../workbench-server/test/assistant-fixture.ts";
 
-const staticRoot = process.env.WORKBENCH_UI_TEST_STATIC_ROOT ?? fileURLToPath(new URL("../dist/public", import.meta.url));
+const staticRoot = process.env.WORKBENCH_UI_TEST_STATIC_ROOT ?? fileURLToPath(new URL("../dist", import.meta.url));
 
 for (const accepted of [false, true]) {
 	test(`development evidence stays internal when ${accepted ? "accepted" : "unverified"}, including after reload`, async ({ page }) => {

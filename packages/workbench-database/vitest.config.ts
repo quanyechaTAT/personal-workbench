@@ -5,7 +5,7 @@ import baseConfig from "../../vitest.base.ts";
 export default mergeConfig(
 	baseConfig,
 	defineConfig({
-		test: { environment: "node" },
+		test: { environment: "node", fileParallelism: false, testTimeout: 30_000 },
 		resolve: {
 			alias: [
 				{

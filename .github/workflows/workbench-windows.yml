@@ -23,6 +23,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Configure test temporary directory
+        run: Add-Content -LiteralPath $env:GITHUB_ENV -Value @("TEMP=$env:RUNNER_TEMP", "TMP=$env:RUNNER_TEMP")
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -35,15 +38,26 @@ jobs:
       - name: Check
         run: npm run check
 
-      - name: Test Workbench
-        run: |
-          npm test --workspace=@earendil-works/workbench-runtime
-          npm test --workspace=@earendil-works/workbench-core
-          npm test --workspace=@earendil-works/workbench-database
-          npm test --workspace=@earendil-works/workbench-mcp
-          npm test --workspace=@earendil-works/workbench-runtime-pi
-          npm test --workspace=@earendil-works/workbench-server
-          npm test --workspace=@earendil-works/workbench-ui
+      - name: Test Workbench runtime
+        run: npm test --workspace=@earendil-works/workbench-runtime
+
+      - name: Test Workbench core
+        run: npm test --workspace=@earendil-works/workbench-core
+
+      - name: Test Workbench database
+        run: npm test --workspace=@earendil-works/workbench-database
+
+      - name: Test Workbench MCP
+        run: npm test --workspace=@earendil-works/workbench-mcp
+
+      - name: Test Workbench Pi runtime
+        run: npm test --workspace=@earendil-works/workbench-runtime-pi
+
+      - name: Test Workbench server
+        run: npm test --workspace=@earendil-works/workbench-server
+
+      - name: Test Workbench UI
+        run: npm test --workspace=@earendil-works/workbench-ui
 
       - name: Check browser tests
         run: npm run check:e2e --workspace=@earendil-works/workbench-ui

@@ -111,9 +111,20 @@ test("closing all terminals kills a real long-running server and permits a new t
 		expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe("active");
 		await harness.terminals.closeAll();
 		await expect(fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
-		const fresh = await harness.terminals.start("Write-Output fresh", 2000);
-		expect(fresh.status).toBe("exited");
-		expect(fresh.output).toContain("fresh");
+		let fresh = await harness.terminals.start("Write-Output fresh", 0);
+		let output = fresh.output;
+		await vi.waitFor(
+			async () => {
+				if (fresh.status === "running") {
+					fresh = await harness.terminals.read(fresh.session_id, "", 250);
+					output += fresh.output;
+				}
+				expect(fresh.status).toBe("exited");
+			},
+			{ timeout: 6000 },
+		);
+		expect(fresh.exit_code).toBe(0);
+		expect(output).toContain("fresh");
 	} finally {
 		await harness.close();
 	}

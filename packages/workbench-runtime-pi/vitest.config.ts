@@ -7,6 +7,7 @@ export default mergeConfig(
 	defineConfig({
 		test: {
 			environment: "node",
+			fileParallelism: false,
 			testTimeout: 30_000,
 			env: { PI_OFFLINE: "1" },
 		},

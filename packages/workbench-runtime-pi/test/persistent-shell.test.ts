@@ -53,6 +53,8 @@ test.runIf(process.platform === "win32")(
 				join(root, "waiting.cjs"),
 				"require('node:fs').writeFileSync('child.pid', String(process.pid)); setInterval(() => {}, 1000)",
 			);
+			// Sandbox setup precedes the child readiness deadline; cancellation tests the running process.
+			await shell.tool.execute("initialize", { command: "Write-Output ready" }, undefined);
 			const executing = shell.tool.execute(
 				"wait",
 				{ command: `& '${process.execPath.replaceAll("'", "''")}' ./waiting.cjs` },
@@ -96,5 +98,5 @@ test.runIf(process.platform === "win32")(
 			await rm(root, { recursive: true, force: true, maxRetries: 5 });
 		}
 	},
-	15_000,
+	30_000,
 );
