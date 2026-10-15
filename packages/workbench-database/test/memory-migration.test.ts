@@ -7,8 +7,62 @@ import { load } from "sqlite-vec";
 import { expect, test } from "vitest";
 import { WorkbenchDatabase } from "../src/database.ts";
 
+test("v028 adds confidence and original verification dates without treating an upgrade as new evidence", async () => {
+	const root = await mkdtemp(join(tmpdir(), "记忆元数据升级 "));
+	const path = join(root, "memory.db");
+	let database = new WorkbenchDatabase(path);
+	try {
+		const timestamp = "2025-01-02T03:04:05.000Z";
+		for (const [id, confirmation] of [
+			["user-fact", "user_confirmed"],
+			["model-fact", "verified"],
+			["unknown-fact", "unknown"],
+		] as const) {
+			const legacy = JSON.stringify({
+				id,
+				confirmation,
+				validFrom: timestamp,
+				updatedAt: timestamp,
+				externalHash: "legacy-fingerprint",
+				text: "保留原文",
+				version: 1,
+			});
+			database
+				.prepare(
+					"INSERT INTO semantic_memories VALUES (?,NULL,'global','MEMORY.md','保留原文',1,'active',?,?,NULL,?)",
+				)
+				.run(id, confirmation, timestamp, legacy);
+			database.prepare("INSERT INTO semantic_versions VALUES (?,1,?)").run(id, legacy);
+		}
+		// v028 only changes JSON data, so replay the migration against pre-upgrade records.
+		database.prepare("DELETE FROM schema_migrations WHERE version=28").run();
+		database.close();
+		database = new WorkbenchDatabase(path);
+		for (const [id, confidence] of [
+			["user-fact", 1],
+			["model-fact", 0.85],
+			["unknown-fact", 0.4],
+		] as const)
+			for (const table of ["semantic_memories", "semantic_versions"]) {
+				const row = database.prepare(`SELECT data_json FROM ${table} WHERE id=?`).get(id);
+				const record: unknown = JSON.parse(String(row?.data_json));
+				expect(record).toMatchObject({
+					confidence,
+					createdAt: timestamp,
+					lastVerifiedAt: timestamp,
+					updatedAt: timestamp,
+					text: "保留原文",
+				});
+				expect(record).not.toHaveProperty("externalHash");
+			}
+	} finally {
+		database.close();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test.each([{ defaultMode: undefined }, { defaultMode: "off" }, { defaultMode: "auto" }])(
-	"upgrades v018 through v027, resets legacy $defaultMode policy and preserves managed documents",
+	"upgrades v018 through v028, resets legacy $defaultMode policy and preserves managed documents",
 	async ({ defaultMode }) => {
 		const root = await mkdtemp(join(tmpdir(), "四层迁移 中文 空格 "));
 		const original = join(root, "旧数据库.db"),
@@ -67,7 +121,7 @@ test.each([{ defaultMode: undefined }, { defaultMode: "off" }, { defaultMode: "a
 			expect(database.prepare("SELECT value_json FROM settings WHERE key='legacy.setting'").get()?.value_json).toBe(
 				'{"保留":true}',
 			);
-			expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count).toBe(27);
+			expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count).toBe(28);
 			expect(
 				database.prepare("SELECT value_json FROM settings WHERE key='learning.project.旧项目'").get()?.value_json,
 			).toBeUndefined();
@@ -94,7 +148,7 @@ test.each([{ defaultMode: undefined }, { defaultMode: "off" }, { defaultMode: "a
 				expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count).toBe(0);
 			database.close();
 			database = new WorkbenchDatabase(upgraded);
-			expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count).toBe(27);
+			expect(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count).toBe(28);
 			expect(await readFile(original)).toEqual(originalBytes);
 		} finally {
 			database?.close();

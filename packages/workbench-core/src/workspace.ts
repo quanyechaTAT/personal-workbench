@@ -527,6 +527,7 @@ export class PathPolicy {
 			/^(?:USER|MEMORY|AGENTS|IDENTITY)\.md$/iu.test(fromWorkspace) ||
 			/^memory\/\d{4}-\d{2}-\d{2}\.md$/u.test(fromWorkspace) ||
 			/^memory\/history\//u.test(fromWorkspace) ||
+			/^(?:projects\/[^/]+\/)?memory\/main\.md$/iu.test(fromWorkspace) ||
 			/^projects\/[^/]+\/(?:AGENTS|MEMORY|PROJECT)\.md$/iu.test(fromWorkspace)
 		);
 	}

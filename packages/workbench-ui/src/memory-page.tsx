@@ -3,6 +3,7 @@ import { type FormEvent, useState } from "react";
 import { api, type MemoryCandidate, type MemoryFileRecord } from "./api.ts";
 import { Icons } from "./icons.tsx";
 import { label } from "./labels.ts";
+import { MemoryMaintenancePanel } from "./memory-maintenance-panel.tsx";
 import { EmptyState, ErrorNotice, formatRelative, LoadingBlock, PageHeader, StatusPill } from "./ui.tsx";
 
 export function MemoryPage() {
@@ -105,6 +106,7 @@ export function MemoryPage() {
 					</button>
 				}
 			/>
+			<MemoryMaintenancePanel />
 			<div className="memory-search">
 				<Icons.Memory />
 				<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索工作台记忆…" />

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { WorkbenchError } from "./errors.ts";
 import { redactLearningText } from "./learning.ts";
 import type { MemoryConfirmation, MemoryEvidence } from "./memory-layers.ts";
+import { type MemoryPolicy, memoryAgeNotice, memoryConfidence, memoryPolicy } from "./memory-policy.ts";
 import type { MemoryScope, MemoryService, ProposeMemoryInput } from "./memory-service.ts";
 import type { MemoryKind, MemorySearchResult } from "./models.ts";
 import { memoryHash, replaceSemanticBlocks, semanticBlocks, semanticMarkdown } from "./semantic-markdown.ts";
@@ -16,6 +17,7 @@ export class SemanticMemoryService {
 	private readonly memory: Pick<MemoryService, "propose" | "accept" | "edit">;
 	private readonly embedding?: SemanticEmbeddingPort;
 	private readonly system: SystemServices;
+	private readonly getPolicy: () => Promise<MemoryPolicy>;
 	constructor(options: {
 		paths: WorkbenchPaths;
 		policy: PathPolicy;
@@ -23,6 +25,7 @@ export class SemanticMemoryService {
 		memory: Pick<MemoryService, "propose" | "accept" | "edit">;
 		embedding?: SemanticEmbeddingPort;
 		system?: SystemServices;
+		getPolicy?: () => Promise<MemoryPolicy>;
 	}) {
 		this.paths = options.paths;
 		this.policy = options.policy;
@@ -30,6 +33,7 @@ export class SemanticMemoryService {
 		this.memory = options.memory;
 		this.embedding = options.embedding;
 		this.system = options.system ?? defaultSystemServices;
+		this.getPolicy = options.getPolicy ?? (async () => memoryPolicy());
 	}
 	async prepare(
 		content: string,
@@ -104,6 +108,11 @@ export class SemanticMemoryService {
 				: []);
 		const updates: SemanticMemory[] = [];
 		const record: SemanticMemory = {
+			confidence: memoryConfidence({ confidence: change.confidence, confirmation }),
+			createdAt: target?.createdAt ?? target?.validFrom ?? now,
+			lastVerifiedAt: now,
+			category: input.category ?? target?.category,
+			futureUse: input.futureUse ?? target?.futureUse,
 			id: change.operation === "create" || change.operation === "supersede" ? id : target!.id,
 			kind,
 			projectId,
@@ -136,6 +145,8 @@ export class SemanticMemoryService {
 			record.text = historical.text;
 			record.status = historical.status;
 			record.confirmation = historical.confirmation;
+			record.confidence = memoryConfidence(historical);
+			record.lastVerifiedAt = historical.lastVerifiedAt ?? historical.updatedAt;
 			record.evidence = historical.evidence;
 			record.conflict = historical.conflict;
 			record.validUntil = undefined;
@@ -207,11 +218,13 @@ export class SemanticMemoryService {
 			if (old && !trusted && (old.externalHash ?? semanticSourceHash(old)) !== observed) {
 				value.version = Math.max(value.version, old.version + 1);
 				value.confirmation = "unknown";
+				value.confidence = 0.4;
 				value.conflict = "external_edit";
 				value.updatedAt = this.system.now().toISOString();
 			} else if (old && !trusted) {
 				value.version = old.version;
 				value.confirmation = old.confirmation;
+				value.confidence = memoryConfidence(old);
 				value.conflict = old.conflict;
 				value.updatedAt = old.updatedAt;
 			}
@@ -222,11 +235,14 @@ export class SemanticMemoryService {
 		await this.repository.replaceSemantics(path, values);
 	}
 	async list(scope: MemoryScope, history = false): Promise<SemanticMemory[]> {
-		return this.repository.listSemantics({
+		const values = await this.repository.listSemantics({
 			projectId: scope.project?.id,
 			at: this.system.now().toISOString(),
 			activeOnly: !history,
+			limit: 10000,
 		});
+		const policy = await this.getPolicy();
+		return values.filter((value) => history || memoryConfidence(value) >= policy.confidenceThreshold);
 	}
 	async history(id: string, scope: MemoryScope): Promise<SemanticMemory[]> {
 		const versions = await this.repository.semanticHistory(id);
@@ -234,6 +250,45 @@ export class SemanticMemoryService {
 		if (!record || (record.projectId && record.projectId !== scope.project?.id))
 			throw new WorkbenchError("not_found", "条目不在当前范围");
 		return versions;
+	}
+	/** Retire from recall while retaining the evidence and previous versions. */
+	async retireLowConfidence(scope: MemoryScope): Promise<number> {
+		const policy = await this.getPolicy();
+		const now = this.system.now().toISOString();
+		const values = (await this.list(scope, true)).filter(
+			(value) => value.status === "active" && memoryConfidence(value) < policy.confidenceThreshold,
+		);
+		let retired = 0;
+		for (const path of new Set(values.map((value) => value.relativePath))) {
+			const target = await this.policy.requireMemory(path);
+			const content = await readFile(target.absolutePath, "utf8");
+			const fileValues = values.filter((value) => value.relativePath === path);
+			const first = fileValues[0];
+			const blocks = semanticBlocks(content, first.kind, path, first.projectId);
+			const updates = fileValues
+				.filter((value) =>
+					blocks.some((block) => block.record.id === value.id && block.record.contentHash === value.contentHash),
+				)
+				.map(
+					(value): SemanticMemory => ({
+						...value,
+						status: "invalidated",
+						validUntil: now,
+						updatedAt: now,
+						version: value.version + 1,
+					}),
+				);
+			if (!updates.length) continue;
+			await this.memory.edit(
+				path,
+				replaceSemanticBlocks(content, blocks, updates),
+				memoryHash(content),
+				first.kind,
+				first.projectId,
+			);
+			retired += updates.length;
+		}
+		return retired;
 	}
 	async change(scope: MemoryScope, input: ProposeMemoryInput): Promise<SemanticMemory[]> {
 		const candidate = await this.memory.propose(scope, input);
@@ -248,7 +303,9 @@ export class SemanticMemoryService {
 		signal?: AbortSignal,
 		embedding: SemanticEmbeddingPort | undefined = this.embedding,
 	): Promise<MemorySearchResult[]> {
+		const policy = await this.getPolicy();
 		const request = {
+			minConfidence: policy.confidenceThreshold,
 			projectId: scope.project?.id,
 			at: this.system.now().toISOString(),
 			query,
@@ -270,6 +327,7 @@ export class SemanticMemoryService {
 		const ranked = new Map<string, { record: SemanticMemory; score: number }>();
 		for (const values of [keyword, vectors])
 			for (const [rank, record] of values.entries()) {
+				if (memoryConfidence(record) < policy.confidenceThreshold) continue;
 				const score = 1 / (60 + rank) + (record.confirmation === "user_confirmed" ? 0.001 : 0);
 				ranked.set(record.id, { record, score: (ranked.get(record.id)?.score ?? 0) + score });
 			}
@@ -284,7 +342,8 @@ export class SemanticMemoryService {
 				startLine: record.startLine,
 				endLine: record.endLine,
 				heading: record.heading,
-				snippet: `[${record.confirmation}; v${record.version}; ${record.conflict}] ${record.text}`,
+				snippet:
+					`[${record.confirmation}; v${record.version}; ${record.conflict}; ${record.lastVerifiedAt ?? record.updatedAt}; confidence=${memoryConfidence(record)}] ${record.text} ${memoryAgeNotice(record.lastVerifiedAt ?? record.updatedAt, policy, this.system.now().getTime())}`.trim(),
 				contentHash: record.contentHash,
 				score: 150 + score,
 			}));
@@ -331,6 +390,8 @@ function semanticSourceHash(value: SemanticMemory): string {
 			value.conflict,
 			value.heading,
 			value.updatedAt,
+			memoryConfidence(value),
+			value.lastVerifiedAt ?? value.updatedAt,
 		]),
 	);
 }

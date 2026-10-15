@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { WorkbenchError } from "@earendil-works/workbench-core";
+import { memoryPolicy, WorkbenchError } from "@earendil-works/workbench-core";
 import { SemanticChangeSchema } from "@earendil-works/workbench-core/contracts";
 import { type Static, Type } from "typebox";
 import { Parse } from "typebox/value";
@@ -30,6 +30,10 @@ export async function handleMemoryLayerRequest(
 		const sessionId = route[1];
 		await application.services.sessions.get(sessionId);
 		const state = application.services.memoryState;
+		if (route[3] === "workspace" && route.length === 4 && method === "GET") {
+			send(response, 200, await application.services.sessionWorkspaces.describe(sessionId));
+			return true;
+		}
 		if (route[3] === "rebuild" && route.length === 4 && method === "POST") {
 			send(response, 200, {
 				indexed: await application.configure((signal) => state.rebuildVectors(sessionId, signal)),
@@ -87,6 +91,16 @@ export async function handleMemoryLayerRequest(
 			return true;
 		}
 		throw new WorkbenchError("not_found", "会话记忆接口不存在");
+	}
+	if (route[0] === "memory" && route[1] === "maintenance" && route.length === 2) {
+		if (method === "POST")
+			await application.configure(() => application.services.memoryMaintenance.run(true), "memory-maintenance");
+		else if (method !== "GET") throw new WorkbenchError("invalid_input", "记忆维护接口不支持此方法");
+		send(response, 200, {
+			policy: memoryPolicy((await application.services.settings.get("memory.policy"))?.value),
+			completedAt: (await application.services.settings.get("memory.maintenance.completedAt"))?.value,
+		});
+		return true;
 	}
 	if (route[0] !== "memory" || !["semantic", "cleanup"].includes(route[1])) return false;
 	if (route[1] === "cleanup" && method === "POST" && route.length === 2) {

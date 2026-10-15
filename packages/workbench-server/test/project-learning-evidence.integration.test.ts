@@ -8,7 +8,13 @@ import { Type } from "typebox";
 import { Parse } from "typebox/value";
 import { expect, test, vi } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
-import { completeLearningTask, LEARNED_FACT, type LearningFixture, reviewOutput } from "./project-learning-fixture.ts";
+import {
+	completeLearningTask,
+	LEARNED_FACT,
+	type LearningFixture,
+	reviewOutput,
+	similarityResponse,
+} from "./project-learning-fixture.ts";
 
 const SourcesSchema = Type.Object({
 	sources: Type.Array(
@@ -152,13 +158,15 @@ test.each([
 			expect((await fixture.application.services.sessions.get(session.id)).status).toBe("idle");
 			fixture.faux.setResponses([
 				(context) => fauxAssistantMessage(JSON.stringify({ ...reviewOutput(context), skills: [] })),
+				...(scenario === "user skill" ? [(context: Context) => similarityResponse(context)] : []),
 			]);
 			const response = await fixture.request(`/projects/${project.id}/learning/reviews/${failed.id}/retry`, {
 				method: "POST",
 			});
 			expect(response.status).toBe(202);
 			const retried = await settled(fixture, project.id);
-			expect(retried.status).toBe(scenario === "user skill" ? "empty" : "ready");
+			expect(retried.status).toBe("ready");
+			expect(retried.diagnostics).toEqual([]);
 			expect(retried.id).not.toBe(failed.id);
 			expect((await fixture.application.services.learning.get(failed.id)).status).toBe("ready");
 		} finally {
@@ -226,7 +234,8 @@ test("a real successful tool's omitted tail is not evidence and a failed tool ca
 			},
 		]);
 		await fixture.application.services.learning.reviewSession(session.id);
-		expect((await settled(fixture, project.id)).diagnostics?.[0].message).toContain("来源未通过成功状态校验");
+		expect((await settled(fixture, project.id)).status).toBe("empty");
+		expect(fixture.faux.getPendingResponseCount()).toBe(1);
 		expect(await fixture.application.services.semantic.list({ project })).toEqual([]);
 	} finally {
 		await fixture.close();

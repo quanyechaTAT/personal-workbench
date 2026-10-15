@@ -334,6 +334,20 @@ function query(values: Record<string, string | undefined>): string {
 }
 
 export const api = {
+	memoryMaintenance: (run = false) =>
+		request<{
+			policy: {
+				confidenceThreshold: number;
+				staleAfterDays: number;
+				consolidationIntervalHours: number;
+				maxEntryCharacters: number;
+			};
+			completedAt?: string;
+		}>("/memory/maintenance", { method: run ? "POST" : "GET" }),
+	sessionWorkspace: (id: string) =>
+		request<{ path: string; migrationPath: string; action: "keep" | "delete" | "migrate" }>(
+			`/sessions/${encodeURIComponent(id)}/memory/workspace`,
+		),
 	sessionMemory: (id: string, q = "") =>
 		request<{ checkpoint?: WorkingCheckpoint; episodes: EpisodicMemory[]; actual?: ContextAssemblyResult }>(
 			`/sessions/${encodeURIComponent(id)}/memory${query({ q })}`,

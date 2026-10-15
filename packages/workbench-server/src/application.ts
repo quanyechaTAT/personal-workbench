@@ -19,6 +19,8 @@ import {
 	MemoryService,
 	MemoryStateService,
 	ModelSettingsService,
+	memoryAgeNotice,
+	memoryPolicy,
 	PathPolicy,
 	PermissionService,
 	type Project,
@@ -28,6 +30,7 @@ import {
 	renderWorkingCheckpoint,
 	SemanticMemoryService,
 	SessionService,
+	SessionWorkspaceService,
 	SettingsService,
 	SkillImportService,
 	SkillService,
@@ -72,6 +75,7 @@ import { necessaryQueryContext } from "./knowledge-mqe.ts";
 import { KnowledgeService } from "./knowledge-service.ts";
 import { StructuredLogger } from "./logger.ts";
 import { MemoryEmbeddingScope } from "./memory-embedding.ts";
+import { MemoryMaintenanceService } from "./memory-maintenance.ts";
 import { MAX_MEMORY_CONTEXT_CHARACTERS, MemoryRetrievalService, renderMemoryContext } from "./memory-retrieval.ts";
 import { ProjectDeletionService } from "./project-deletion-service.ts";
 import { SecretStore } from "./secret-store.ts";
@@ -103,6 +107,8 @@ export interface WorkbenchServices {
 	tasks: TaskService;
 	memory: MemoryService;
 	memoryState: MemoryStateService;
+	memoryMaintenance: MemoryMaintenanceService;
+	sessionWorkspaces: SessionWorkspaceService;
 	semantic: SemanticMemoryService;
 	retrieval: MemoryRetrievalService;
 	checkpointReview: CheckpointReviewService;
@@ -237,8 +243,11 @@ export class WorkbenchApplication {
 			if (!isMinimalAssistant(profile) && context.memory) {
 				context.runtime.getWorkingCheckpoint = async () => {
 					const value = await this.services.memoryState.checkpoint(id);
-					return value && (context.workingBudget ?? 0) >= 1000
-						? renderWorkingCheckpoint(value, context.workingBudget)
+					const policy = memoryPolicy((await this.services.settings.get("memory.policy"))?.value);
+					return value &&
+						(value.confidence ?? 0.9) >= policy.confidenceThreshold &&
+						(context.workingBudget ?? 0) >= 1000
+						? `${renderWorkingCheckpoint(value, (context.workingBudget ?? 4000) - 160)}\n记忆时间：${value.updatedAt}；置信度：${value.confidence ?? 0.9}。${memoryAgeNotice(value.updatedAt, policy)}`
 						: undefined;
 				};
 				context.runtime.onModelContext = async (request) => {
@@ -586,6 +595,7 @@ export class WorkbenchApplication {
 		const errors = await runCleanupSteps([
 			() => this.logger.log("runtime.stop"),
 			() => this.services.learning.dispose(),
+			() => this.services.memoryMaintenance.dispose(),
 			() => this.services.checkpointReview.dispose(),
 			() => this.coordinator.shutdown(),
 			() => this.services.sessions.dispose(),
@@ -618,6 +628,7 @@ export async function createWorkbenchApplication(
 	let knowledgeService: KnowledgeService | undefined;
 	let browserUse: BrowserUseService | undefined;
 	let computerUse: ComputerUseService | undefined;
+	let memoryMaintenance: MemoryMaintenanceService | undefined;
 	try {
 		await workspace.initialize();
 		const logger = new StructuredLogger(join(paths.logs, "workbench.jsonl"));
@@ -637,6 +648,7 @@ export async function createWorkbenchApplication(
 		const memory = new MemoryService(paths, pathPolicy, repositories.memory, undefined, repositories.semantic);
 		const embeddingClient = new KnowledgeEmbeddingClient(options.embeddingEnvFile);
 		const semantic = new SemanticMemoryService({
+			getPolicy: async () => memoryPolicy((await settings.get("memory.policy"))?.value),
 			paths,
 			policy: pathPolicy,
 			repository: repositories.semantic,
@@ -670,6 +682,7 @@ export async function createWorkbenchApplication(
 		knowledgeService = knowledge;
 		const artifacts = new ArtifactService(paths, pathPolicy, repositories.artifacts);
 		const settings = new SettingsService(repositories.settings);
+		const sessionWorkspaces = new SessionWorkspaceService(paths, pathPolicy, settings);
 		const skillCatalog = new PiSkillCatalog();
 		const skills = new SkillService(paths, repositories.skills, skillCatalog);
 		const skillImports = new SkillImportService({
@@ -892,6 +905,9 @@ export async function createWorkbenchApplication(
 		});
 		await memoryState.initializeRecovery();
 		memoryRetrieval = new MemoryRetrievalService({
+			getSkillStates: (projectId) => repositories.learning.skillStates(projectId),
+			getPolicy: async () => memoryPolicy((await settings.get("memory.policy"))?.value),
+			getDigest: (project) => memoryMaintenance?.read(project) ?? Promise.resolve([]),
 			sessions: repositories.sessions,
 			profiles: repositories.profiles,
 			projects,
@@ -901,6 +917,7 @@ export async function createWorkbenchApplication(
 			knowledge,
 		});
 		sessions = new SessionService({
+			workspaces: sessionWorkspaces,
 			sessions: repositories.sessions,
 			runs: repositories.agentRuns,
 			profiles: repositories.profiles,
@@ -1039,6 +1056,20 @@ export async function createWorkbenchApplication(
 		if (!(await settings.get("memory.userDocumentLocation")))
 			await settings.set("memory.userDocumentLocation", "workbench-root-v2");
 		await learning.initializeRecovery();
+		memoryMaintenance = new MemoryMaintenanceService({
+			paths,
+			policy: pathPolicy,
+			settings,
+			projects,
+			memory,
+			semantic,
+			learning,
+			skills,
+			runtime: activeRuntime,
+			model: () => generationModel(),
+			onError: (message) => logger.log("memory.maintenance.error", { message }),
+		});
+		await memoryMaintenance.start();
 		const events = new AgentEventBroker(
 			sessions,
 			logger,
@@ -1066,6 +1097,8 @@ export async function createWorkbenchApplication(
 		await taskCleanup.recover();
 		await knowledge.recover(await projects.list());
 		const services: WorkbenchServices = {
+			memoryMaintenance,
+			sessionWorkspaces,
 			browserUse: browsers,
 			computerUse: desktop,
 			activity,
@@ -1118,6 +1151,7 @@ export async function createWorkbenchApplication(
 		});
 	} catch (error) {
 		await runCleanupSteps([
+			() => memoryMaintenance?.dispose(),
 			() => permissions?.dispose(),
 			() => runtime?.dispose(),
 			() => browserUse?.dispose(),

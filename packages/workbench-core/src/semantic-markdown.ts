@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { WorkbenchError } from "./errors.ts";
+import { memoryConfidence } from "./memory-policy.ts";
 import type { MemoryKind } from "./models.ts";
 import type { SemanticMemory } from "./semantic-memory.ts";
 
@@ -39,7 +40,7 @@ export interface SemanticBlock {
 }
 export function semanticMarkdown(record: SemanticMemory): string {
 	const { text, startLine: _start, endLine: _end, externalHash: _external, ...metadata } = record;
-	return `<!-- workbench-semantic ${JSON.stringify({ ...metadata, contentHash: memoryHash(text.trim()) })} -->\n${text.trim()}\n<!-- /workbench-semantic -->`;
+	return `<!-- workbench-semantic ${JSON.stringify({ ...metadata, confidence: memoryConfidence(record), createdAt: record.createdAt ?? record.validFrom, lastVerifiedAt: record.lastVerifiedAt ?? record.updatedAt, contentHash: memoryHash(text.trim()) })} -->\n${text.trim()}\n<!-- /workbench-semantic -->`;
 }
 export function semanticBlocks(
 	content: string,
@@ -63,6 +64,10 @@ export function semanticBlocks(
 			!["unknown", "unverified", "verified", "user_confirmed"].includes(value.confirmation) ||
 			!["original", "model", "user"].includes(value.origin) ||
 			!Array.isArray(value.evidence) ||
+			[value.createdAt, value.lastVerifiedAt, value.updatedAt].some(
+				(timestamp) =>
+					timestamp !== undefined && (typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))),
+			) ||
 			typeof value.validFrom !== "string" ||
 			!Number.isFinite(Date.parse(value.validFrom))
 		)
@@ -75,6 +80,10 @@ export function semanticBlocks(
 			end: start + match[0].length,
 			record: {
 				...value,
+				confidence: changed ? 0.4 : memoryConfidence(value),
+				createdAt: value.createdAt ?? value.validFrom,
+				lastVerifiedAt: value.lastVerifiedAt ?? value.updatedAt ?? value.validFrom,
+				updatedAt: value.updatedAt ?? value.validFrom,
 				kind,
 				relativePath: path,
 				projectId,

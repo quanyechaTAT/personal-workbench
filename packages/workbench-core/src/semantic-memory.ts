@@ -3,6 +3,7 @@ import type { MemoryKind } from "./models.ts";
 
 export type SemanticOperation = "create" | "update" | "merge" | "supersede" | "invalidate" | "rollback";
 export interface SemanticChange {
+	confidence?: number;
 	operation: SemanticOperation;
 	targetId?: string;
 	expectedVersion?: number;
@@ -15,6 +16,11 @@ export interface SemanticChange {
 	conflictIds?: string[];
 }
 export interface SemanticMemory {
+	confidence?: number;
+	createdAt?: string;
+	lastVerifiedAt?: string;
+	category?: "fact" | "preference" | "environment" | "decision";
+	futureUse?: string;
 	/** Index-only fingerprint of the last observed Markdown anchor and body. */
 	externalHash?: string;
 	id: string;
@@ -52,6 +58,7 @@ export interface MemoryWriteIntent {
 	createdAt: string;
 }
 export interface SemanticQuery {
+	minConfidence?: number;
 	projectId?: string;
 	kind?: Exclude<MemoryKind, "daily">;
 	query?: string;

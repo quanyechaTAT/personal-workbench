@@ -15,6 +15,12 @@ interface Row {
 function filter(query: SemanticQuery): { clause: string; values: SQLInputValue[] } {
 	const clauses = [query.projectId ? "(m.project_id IS NULL OR m.project_id = ?)" : "m.project_id IS NULL"];
 	const values: SQLInputValue[] = query.projectId ? [query.projectId] : [];
+	if (query.minConfidence !== undefined) {
+		clauses.push(
+			"COALESCE(json_extract(m.data_json, '$.confidence'), CASE m.confirmation WHEN 'user_confirmed' THEN 1.0 WHEN 'verified' THEN 0.85 ELSE 0.4 END) >= ?",
+		);
+		values.push(query.minConfidence);
+	}
 	if (query.kind) {
 		clauses.push("m.kind = ?");
 		values.push(query.kind);

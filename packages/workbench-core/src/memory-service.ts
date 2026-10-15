@@ -33,6 +33,8 @@ export interface MemoryDocument {
 type MemoryPathPolicy = Pick<PathPolicy, "requireMemory" | "requireWorkspace" | "isProtectedMemoryPath">;
 
 export interface ProposeMemoryInput {
+	category?: "fact" | "preference" | "environment" | "decision";
+	futureUse?: string;
 	evidence?: SemanticChange["evidence"];
 	semanticChange?: SemanticChange;
 	kind: MemoryKind;

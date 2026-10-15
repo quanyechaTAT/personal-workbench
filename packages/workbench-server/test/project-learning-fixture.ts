@@ -9,6 +9,29 @@ export type LearningFixture = Awaited<ReturnType<typeof createAssistantFixture>>
 export const LEARNED_FACT = "项目使用 Python 3.12。";
 export const LEARNED_INSTRUCTIONS =
 	"## 适用条件\n检查项目文件结构时使用。\n\n## 步骤\n1. 列出当前项目目录。\n2. 先阅读 AGENTS.md，再确定下一步。\n\n## 输出\n先展示目录名称，再展示文件数量。\n\n## 验证\n核对工具返回的真实文件名；遵守会话权限。";
+
+export function similarityResponse(context: Context, relation: "duplicate" | "related" = "duplicate") {
+	if (context.tools?.length) throw new Error("Similarity review must have no tools");
+	const message = context.messages.at(-1);
+	if (message?.role !== "user") throw new Error("Expected similarity input");
+	const text =
+		typeof message.content === "string"
+			? message.content
+			: message.content
+					.filter((part) => part.type === "text")
+					.map((part) => part.text)
+					.join("\n");
+	const input = Parse(
+		Type.Object({
+			operation: Type.Literal("memory-similarity"),
+			existing: Type.Array(Type.Object({ id: Type.String() }), { minItems: 1 }),
+		}),
+		JSON.parse(text),
+	);
+	return fauxAssistantMessage(
+		JSON.stringify({ relation, targetId: input.existing[0].id, reason: "同一适用条件与方法，按已有经验处理。" }),
+	);
+}
 const InputSchema = Type.Object({
 	sources: Type.Array(
 		Type.Object({ id: Type.String(), role: Type.String(), text: Type.String(), verified: Type.Boolean() }),

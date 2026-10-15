@@ -2,6 +2,7 @@ import { Type } from "typebox";
 
 export const SemanticChangeSchema = Type.Object(
 	{
+		confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
 		operation: Type.Union([
 			Type.Literal("create"),
 			Type.Literal("update"),

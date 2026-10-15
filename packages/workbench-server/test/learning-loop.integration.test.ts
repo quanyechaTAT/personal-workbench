@@ -7,7 +7,12 @@ import { Type } from "typebox";
 import { Parse } from "typebox/value";
 import { expect, test, vi } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
-import { completeLearningTask, type LearningFixture, reviewOutput } from "./project-learning-fixture.ts";
+import {
+	completeLearningTask,
+	type LearningFixture,
+	reviewOutput,
+	similarityResponse,
+} from "./project-learning-fixture.ts";
 
 const Input = Type.Object({
 	sources: Type.Array(
@@ -70,6 +75,7 @@ test("explicit workflow correction revises the same verified skill without adopt
 					skill = data.managedSkills[0],
 					user = data.sources.find((source) => source.role === "user")!;
 				expect(skill.content).toBe(original.content);
+				fixture.faux.appendResponses([(context) => similarityResponse(context, "related")]);
 				return fauxAssistantMessage(
 					JSON.stringify({
 						summary: "修订项目检查约束",
@@ -301,6 +307,10 @@ test("review refuses to rewrite a managed skill omitted from its complete-body b
 		await completeLearningTask(fixture, project.id, "periodic", (context) => {
 			const output = reviewOutput(context);
 			output.memories = [];
+			fixture.faux.appendResponses([
+				() =>
+					fauxAssistantMessage(JSON.stringify({ relation: "distinct", reason: "alpha 与 beta 的适用目标不同。" })),
+			]);
 			output.skills = ["alpha", "beta"].map((suffix) => ({
 				...output.skills[0],
 				slug: `learned-budget-${suffix}`,

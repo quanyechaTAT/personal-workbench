@@ -22,6 +22,7 @@ import { WorkbenchError } from "./errors.ts";
 import { type MemoryStateService, renderWorkingCheckpoint } from "./memory-state-service.ts";
 import type { AgentProfile, AgentRun, Project, WorkbenchSession } from "./models.ts";
 import type { AgentProfileRepository, AgentRunRepository, SessionRepository } from "./repositories.ts";
+import type { SessionWorkspaceService } from "./session-workspace.ts";
 import { defaultSystemServices, type SystemServices, toTimestamp } from "./system.ts";
 
 export interface CreateWorkbenchSessionInput {
@@ -55,6 +56,7 @@ export class SessionService {
 	private readonly runtimes: ReadonlyMap<string, AgentRuntime>;
 	private readonly capabilities?: CapabilityService;
 	private readonly system: SystemServices;
+	private readonly workspaces?: SessionWorkspaceService;
 	private readonly onRecoveryError?: (sessionId: string, error: unknown) => Promise<void>;
 	private readonly getSandboxPolicy?: () => Promise<RuntimeSandboxPolicy>;
 	private readonly memoryState?: MemoryStateService;
@@ -82,6 +84,7 @@ export class SessionService {
 			value: Parameters<NonNullable<RuntimeContextOptions["onSkillLoaded"]>>[0],
 		) => Promise<void>;
 		system?: SystemServices;
+		workspaces?: SessionWorkspaceService;
 	}) {
 		this.sessions = options.sessions;
 		this.runs = options.runs;
@@ -93,6 +96,7 @@ export class SessionService {
 		this.memoryState = options.memoryState;
 		this.onSkillLoaded = options.onSkillLoaded;
 		this.system = options.system ?? defaultSystemServices;
+		this.workspaces = options.workspaces;
 	}
 
 	async initializeRecovery(): Promise<void> {
@@ -100,6 +104,7 @@ export class SessionService {
 		await this.runs.markRunningInterrupted(now);
 		await this.sessions.markRunningInterrupted(now);
 		for (const session of await this.sessions.list()) {
+			if (!session.deletionRequestedAt) await this.workspaces?.ensure(session.id, session.projectId);
 			if (!session.deletionRequestedAt) continue;
 			try {
 				await this.finishDeletion(session);
@@ -119,6 +124,7 @@ export class SessionService {
 		if (kind === "project" && !input.project)
 			throw new WorkbenchError("invalid_input", "Project sessions require a project");
 		const workbenchSessionId = this.system.id();
+		await this.workspaces?.ensure(workbenchSessionId, input.project?.id);
 		const cwd =
 			input.project?.sourcePath ??
 			input.project?.workspacePath ??
@@ -546,6 +552,10 @@ export class SessionService {
 	}
 
 	private async finishDeletion(session: WorkbenchSession): Promise<void> {
+		const disposition = await this.workspaces?.validateDeletion(session).catch(async (error: unknown) => {
+			await this.sessions.update({ ...session, deletionRequestedAt: undefined });
+			throw error;
+		});
 		try {
 			await this.requireRuntime(session.runtime).deleteSessionReference({
 				reference: {
@@ -566,6 +576,7 @@ export class SessionService {
 			throw error;
 		}
 		this.attachedSessionIds.delete(session.id);
+		await this.workspaces?.finishDeletion(session, disposition);
 		await this.sessions.delete(session.id);
 	}
 
@@ -840,7 +851,16 @@ export class SessionService {
 				sandbox,
 				minimal,
 				systemPrompt: profile.systemPrompt,
-				appendSystemPrompt: minimal ? [] : input.context?.appendSystemPrompt,
+				appendSystemPrompt: minimal
+					? []
+					: [
+							...(input.context?.appendSystemPrompt ?? []),
+							...(this.workspaces
+								? [
+										`当前会话独立工作区：${(await this.workspaces.describe(input.workbenchSessionId)).path}。会话资料可保存在此；项目源码仍在项目工作目录。删除会话时可保留、迁移或删除此独立目录。`,
+									]
+								: []),
+						],
 				skillPaths: minimal
 					? []
 					: resolved

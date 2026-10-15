@@ -6,6 +6,7 @@ import {
 	type RuntimeSandboxPolicy,
 } from "@earendil-works/workbench-runtime";
 import { WorkbenchError } from "./errors.ts";
+import { memoryPolicy } from "./memory-policy.ts";
 import type { JsonValue, SettingRecord } from "./models.ts";
 import type { SettingsRepository } from "./repositories.ts";
 import { defaultSystemServices, type SystemServices, toTimestamp } from "./system.ts";
@@ -44,6 +45,9 @@ export class SettingsService {
 	}
 
 	async set(key: string, value: JsonValue, expectedVersion?: number): Promise<SettingRecord> {
+		if (key === "memory.policy") value = { ...memoryPolicy(value) };
+		if (key.startsWith("session.workspaceDisposition.") && !["keep", "delete", "migrate"].includes(String(value)))
+			throw new WorkbenchError("invalid_input", "会话工作区处理方式必须为 keep、delete 或 migrate");
 		if (!key.trim()) throw new WorkbenchError("invalid_input", "Setting key is required");
 		if (key === "memory.checkpointReviewEnabled" && typeof value !== "boolean")
 			throw new WorkbenchError("invalid_input", "工作检查点整理开关必须为布尔值");

@@ -4,10 +4,16 @@ import {
 	isMinimalAssistant,
 	type KnowledgeSearchResult,
 	type MemoryContextFragment,
+	type MemoryPolicy,
 	type MemoryRetrievalRequest,
 	type MemoryRetrievalResult,
 	type MemoryService,
 	type MemoryStateService,
+	type MemorySummarySource,
+	memoryAgeNotice,
+	memoryConfidence,
+	memoryPolicy,
+	type Project,
 	type ProjectService,
 	redactLearningText,
 	renderWorkingCheckpoint,
@@ -16,6 +22,7 @@ import {
 	WorkbenchError,
 	type WorkbenchSkill,
 } from "@earendil-works/workbench-core";
+import type { LearningSkillState } from "@earendil-works/workbench-core/contracts";
 import { knowledgeCitation } from "./knowledge-retrieval.ts";
 import type { KnowledgeSearchOptions, KnowledgeService } from "./knowledge-service.ts";
 import { memoryInstruction, resolveMemoryInstructionScopes } from "./memory-instructions.ts";
@@ -37,7 +44,9 @@ export function renderMemoryFragment(fragment: MemoryContextFragment): string {
 	return `<memory-source>${JSON.stringify({ layer: fragment.layer, id: fragment.id, label: fragment.layer === "semantic" ? undefined : fragment.label, version: fragment.version, reason: fragment.reason, truncated: fragment.truncated })}\n${fragment.text}\n</memory-source>`;
 }
 export function renderMemoryContext(fragments: MemoryContextFragment[]): string {
-	const selected = fragments.filter((fragment) => fragment.layer !== "working" && fragment.layer !== "skill");
+	const selected = fragments.filter(
+		(fragment) => fragment.layer !== "working" && (fragment.layer !== "skill" || fragment.timestamp),
+	);
 	if (!selected.length) return "";
 	const references = selected.filter((fragment) => !fragment.instruction);
 	const instructions = selected.filter((fragment) => fragment.instruction);
@@ -56,6 +65,9 @@ export interface UnifiedMemoryResult {
 	workingBudget: number;
 }
 interface RetrievalDependencies {
+	getSkillStates?: (projectId: string) => Promise<LearningSkillState[]>;
+	getPolicy?: () => Promise<MemoryPolicy>;
+	getDigest?: (project?: Project) => Promise<Array<Omit<MemorySummarySource, "text"> & { summary: string }>>;
 	sessions: SessionRepository;
 	profiles: AgentProfileRepository;
 	projects: ProjectService;
@@ -127,14 +139,21 @@ export class MemoryRetrievalService {
 		const embedding = this.options.knowledge.embeddingScope();
 		const fragments: MemoryContextFragment[] = [];
 		const diagnostics: string[] = [];
+		const policy = (await this.options.getPolicy?.()) ?? memoryPolicy();
+		const skillStates = new Map(
+			(project ? ((await this.options.getSkillStates?.(project.id)) ?? []) : []).map((state) => [
+				state.skillId,
+				state,
+			]),
+		);
 		const checkpoint = await this.options.state.checkpoint(session.id);
-		if (checkpoint && workingBudget >= 1000)
+		if (checkpoint && (checkpoint.confidence ?? 0.9) >= policy.confidenceThreshold && workingBudget >= 1000)
 			fragments.push({
 				id: `working:${session.id}`,
 				layer: "working",
 				label: "当前会话检查点",
 				version: checkpoint.version,
-				text: renderWorkingCheckpoint(checkpoint, workingBudget),
+				text: `${renderWorkingCheckpoint(checkpoint, Math.max(0, workingBudget - 160))}\n记忆时间：${checkpoint.updatedAt}；置信度：${checkpoint.confidence ?? 0.9}。${memoryAgeNotice(checkpoint.updatedAt, policy)}`,
 				sources: checkpoint.sources,
 				reason: "当前会话最新有效检查点",
 				truncated: JSON.stringify(checkpoint).length > workingBudget,
@@ -173,6 +192,9 @@ export class MemoryRetrievalService {
 		}
 		const current = await this.options.semantic.list({ project });
 		const known = await this.options.semantic.list({ project }, true);
+		const digest = (await this.options.getDigest?.(project)) ?? [];
+		const digestById = new Map(digest.map((entry) => [entry.id, entry]));
+		const recalledIds = new Set(memories.map((memory) => memory.memoryId));
 		const baselineReasons = new Map<string, string>();
 		const facts = new Map(current.map((value) => [value.id, value]));
 		const essential = current.filter(
@@ -214,9 +236,24 @@ export class MemoryRetrievalService {
 			);
 		// Relevant complete entries get first choice; standing conventions do not require keyword overlap.
 		memories = [...memories, ...baseline, ...legacy];
+		for (const entry of digest) {
+			const fact = current.find((value) => value.id === entry.id);
+			if (fact && !memories.some((value) => value.memoryId === fact.id))
+				memories.push({
+					memoryId: fact.id,
+					kind: fact.kind,
+					relativePath: fact.relativePath,
+					startLine: fact.startLine,
+					endLine: fact.endLine,
+					contentHash: fact.contentHash,
+					snippet: entry.summary,
+					score: 0,
+				});
+		}
 		for (const memory of memories) {
 			if (memory.kind === "daily") continue;
 			const fact = facts.get(memory.memoryId);
+			if (fact && memoryConfidence(fact) < policy.confidenceThreshold) continue;
 			if (fact?.conflict === "detected") {
 				diagnostics.push(`事实 ${fact.id} 存在冲突，未注入；请审核替代关系。`);
 				continue;
@@ -245,12 +282,31 @@ export class MemoryRetrievalService {
 						fact?.text ?? memory.snippet,
 					)
 				: undefined;
+			const summary =
+				fact?.origin === "model" && !instruction && !recalledIds.has(memory.memoryId)
+					? digestById.get(memory.memoryId)
+					: undefined;
+			const timestamp = fact?.lastVerifiedAt ?? fact?.updatedAt;
+			const ageNotice = timestamp ? memoryAgeNotice(timestamp, policy) : "";
+			if (ageNotice) diagnostics.push(`${memory.memoryId}：${ageNotice}`);
 			fragments.push({
 				id: memory.memoryId,
+				timestamp,
+				confidence: fact ? memoryConfidence(fact) : undefined,
 				layer: "semantic",
 				label: `${memory.relativePath}:${memory.startLine}`,
 				version: fact?.version,
-				text: [memory.heading, instruction && fact ? fact.text : memory.snippet].filter(Boolean).join("\n"),
+				text: [
+					memory.heading,
+					summary
+						? `${summary.summary}\n详情按需读取：${summary.path}`
+						: instruction && fact
+							? fact.text
+							: memory.snippet,
+					timestamp ? `记忆时间：${timestamp}；置信度：${memoryConfidence(fact!)}。${ageNotice}` : undefined,
+				]
+					.filter(Boolean)
+					.join("\n"),
 				instruction,
 				sources: fact?.evidence.length
 					? fact.evidence
@@ -264,7 +320,7 @@ export class MemoryRetrievalService {
 							},
 						],
 				reason:
-					baselineReasons.get(memory.memoryId) ??
+					(summary ? "main.md 渐进式摘要；完整方案与证据按需读取" : baselineReasons.get(memory.memoryId)) ??
 					(fact?.confirmation === "user_confirmed"
 						? "当前有效版本；用户确认；关键词或向量召回"
 						: fact
@@ -274,6 +330,7 @@ export class MemoryRetrievalService {
 			});
 		}
 		const episodeQuery = {
+			minConfidence: policy.confidenceThreshold,
 			query: request.query || undefined,
 			from: request.from,
 			until: request.until,
@@ -289,13 +346,13 @@ export class MemoryRetrievalService {
 			);
 			episodes = await this.options.state.episodes(session.id, episodeQuery);
 		}
-		for (const episode of episodes)
+		for (const episode of episodes.filter((value) => (value.confidence ?? 0.9) >= policy.confidenceThreshold))
 			fragments.push({
 				id: episode.id,
 				layer: "episodic",
 				label: `经历 ${episode.occurredAt}`,
 				version: episode.version,
-				text: `${episode.summary}\n状态：${episode.outcome}\n结果（助手摘要，须验证）：${episode.result}\n${episode.actions.map((action) => `${action.verified ? "工具结果已验证" : "未验证／失败"} ${action.tool}: ${action.result}`).join("\n")}`,
+				text: `${episode.summary}\n状态：${episode.outcome}\n记忆时间：${episode.occurredAt}；置信度：${episode.confidence ?? 0.9}。${memoryAgeNotice(episode.occurredAt, policy)}\n结果（助手摘要，须验证）：${episode.result}\n${episode.actions.map((action) => `${action.verified ? "工具结果已验证" : "未验证／失败"} ${action.tool}: ${action.result}`).join("\n")}`,
 				sources: episode.sources,
 				reason: "当前范围的相似事件；关键词／已重建向量融合并考虑时间，保留验证状态",
 				truncated: false,
@@ -329,7 +386,11 @@ export class MemoryRetrievalService {
 			});
 		}
 		const allowed = skills.filter(
-			(skill) => skill.enabled && (skill.scope === "global" || skill.projectId === session.projectId),
+			(skill) =>
+				skill.enabled &&
+				(skill.scope === "global" || skill.projectId === session.projectId) &&
+				(!skillStates.has(skill.id) ||
+					(skillStates.get(skill.id)!.confidence ?? 0.85) >= policy.confidenceThreshold),
 		);
 		const terms = new Set(request.query.toLowerCase().match(/[a-z0-9_-]{2,}|[\p{Script=Han}]{2}/gu) ?? []);
 		const scores = new Map(
@@ -348,18 +409,25 @@ export class MemoryRetrievalService {
 			]),
 		);
 		allowed.sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0) || a.slug.localeCompare(b.slug));
-		for (const skill of allowed)
+		for (const skill of allowed) {
+			const state = skillStates.get(skill.id);
+			const timestamp = state?.lastVerifiedAt ?? state?.updatedAt;
+			const notice = timestamp ? memoryAgeNotice(timestamp, policy) : "";
+			if (notice) diagnostics.push(`${skill.name}：${notice}`);
 			fragments.push({
 				id: skill.id,
+				timestamp,
+				confidence: state ? (state.confidence ?? 0.85) : undefined,
 				layer: "skill",
 				label: skill.name,
-				text: `<skill>\n<name>${escapeXml(skill.name)}</name>\n<description>${escapeXml(skill.description)}</description>\n<location>${escapeXml(skill.path)}</location>\n</skill>`,
+				text: `<skill>\n<name>${escapeXml(skill.name)}</name>\n<description>${escapeXml(digestById.get(skill.id)?.summary ?? skill.description)}</description>\n<location>${escapeXml(skill.path)}</location>${timestamp ? `\n<memory-status>记忆时间：${escapeXml(timestamp)}；置信度：${state?.confidence ?? 0.85}。${notice}</memory-status>` : ""}\n</skill>`,
 				sources: [
 					{ kind: "file", id: skill.id, path: skill.path, confirmation: "unknown", availability: "present" },
 				],
 				reason: `目录可用；任务关键词相关度 ${scores.get(skill.id) ?? 0}；正文仍需按需读取`,
 				truncated: false,
 			});
+		}
 		const applicable = resolveMemoryInstructionScopes(fragments, diagnostics);
 		const selected: MemoryContextFragment[] = [];
 		const semanticSizes = new Map(
@@ -440,7 +508,7 @@ export class MemoryRetrievalService {
 		const characters =
 			renderMemoryContext(selected).length +
 			selected
-				.filter((item) => item.layer === "working" || item.layer === "skill")
+				.filter((item) => item.layer === "working" || (item.layer === "skill" && !item.timestamp))
 				.reduce((sum, item) => sum + item.text.length, 0);
 		return {
 			knowledge,

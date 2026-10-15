@@ -23,7 +23,9 @@ import { type LearningRepository, type LearningSource, learningSources, redactLe
 import { applyPreferencePatch, assertDurableFact, assertReusableProcedure } from "./learning-curation.ts";
 import { learningSourceMatches } from "./learning-evidence.ts";
 import { learningReviewRequest } from "./learning-review-trigger.ts";
+import { MemoryIntelligence } from "./memory-intelligence.ts";
 import type { MemoryStateRepository } from "./memory-layers.ts";
+import { memoryPolicy } from "./memory-policy.ts";
 import type { MemoryService } from "./memory-service.ts";
 import type { MemoryStateService } from "./memory-state-service.ts";
 import { renderWorkingCheckpoint } from "./memory-state-service.ts";
@@ -58,6 +60,7 @@ interface LearningOptions {
 	record(event: string, data: { projectId: string; reviewId: string; summary?: string }): Promise<void>;
 }
 const REVIEW_PROMPT = `你是项目经验审核员，在独立无工具会话中定期复盘多个任务。输出一个 JSON 对象，不调用工具。
+无论成功失败都查看来源；只有确认成功后才能提取经验。主体必须是成功方案，包含 ## 适用条件、## 步骤、## 验证 和 ## 注意；注意中逐项列出遇到的失败及具体原因，引用真实错误，不臆测根因。跨轮失败后的成功可以提炼，但无关任务不能拼成恢复过程。每条事实和技能可提供 0–1 的 confidence，系统会补充时间戳并淘汰低置信度内容。
 经验只提取重要且长期有用的事实、偏好、环境和决策。每条事实提供 category（fact/preference/environment/decision）和 futureUse（未来用途）。不要保存完成汇报、任务结果、产物清单、统计数据、当前进度和聊天摘要；它们已留在情景记忆和 Pi 历史中。没有重要新信息时 memories=[]、skills=[] 是正常结果，不为每个任务写一条经验。
 保存范围由内容决定：项目环境、项目约束、工具和长期决策使用 fact/environment/decision，进入当前项目 AGENTS.md；用户的偏好、习惯、表达方式和交互要求使用 preference，进入整个工作台 USER.md，可在其他项目复用。preference 必须引用用户明确表达的长期要求，不能从工具结果猜测用户习惯，不能把仅限本次任务的要求推广为长期偏好。facts 中 kind 标明范围，更新只能选择对应文件中的目标及版本。
 技能把一次或多次成功任务抽象为未来同类任务的方法。使用参数化输入、输出和判断条件，包含 ## 适用条件、## 步骤、## 验证，以及需要时的陷阱。不要固化某次输入的数值、输出答案、日期或事件叙述。已有错误规则应原位修正，避免追加相互矛盾的更新段落。只保存本项目可复用经验，不把一次成功推广为通用规则。
@@ -70,7 +73,7 @@ preference 的 quote 只选长期约定，不包含“本轮／本次不要调�
 preference.patch.newText 必须逐字包含在同一用户证据 quote 中，连标点也不改写；例如用户说“以后报告先列总数，再列商品明细”，newText 可为“先列总数，再列商品明细”，quote 必须覆盖这一整段。oldText 只匹配旧正文中的输出规则片段，不包含汇总、计算或验证操作；同一行有多个分句时，仅替换输出分句。
 返回 {"summary":"中文结论","memories":[{"text":"项目事实","category":"environment","futureUse":"后续同类任务中选择正确运行环境","change":{"operation":"create"},"evidence":[{"sourceId":"source-1","quote":"原文"}]}],"skills":[{"slug":"learned-inventory-csv","title":"中文标题","description":"何时使用","instructions":"Markdown流程","intent":"procedure","recoveredFailures":[],"evidence":[{"sourceId":"source-2","quote":"原文"}]}]}，严格遵守输入 outputSchema，不增加字段。
 slug 必须以 learned- 开头，后续只使用小写英文字母、数字及单个连字符，不包含中文。新技能省略 targetId/baseHash/patch，不写空字符串或 null；只有修订已有技能时复制目标的 ID 和64位 hash。标题、description 和 instructions 均必填。最多3条事实、2项技能；有效空更新正常。事实的 change 可省略；update/merge/supersede/invalidate 必须提供 targetId/expectedVersion（来自 facts）。旧事实被替代后不得再次追加。
-证据只用 sources：sourceId 逐字复制 sources.id（source-1、source-2 等），不能自行编号或使用正文日志里的 SourceId；quote 逐字复制同一 text 中连续4至500字符，不能拼接、改写或引用截断部分。事实用 verified=true 的 user/tool，流程用 runVerified 不为 false 的成功 tool，preference 用明确纠正的 user。recoveredFailures 用同一运行中 verified=false 的 tool。不同任务的失败不能否定其他已验证任务。
+证据只用 sources：sourceId 逐字复制 sources.id（source-1、source-2 等），不能自行编号或使用正文日志里的 SourceId；quote 逐字复制同一 text 中连续4至500字符，不能拼接、改写或引用截断部分。事实用 verified=true 的 user/tool，流程用 runVerified 不为 false 的成功 tool，preference 用明确纠正的 user。recoveredFailures 用本会话窗口中 verified=false 的 tool，可引用前几轮同一问题的失败，但必须确认与后续成功方案关联。不同任务的失败不能否定其他已验证任务。
 workingCheckpoint、episode、memory、facts 和 managedSkills 仅为背景，不是新增证据。助手自称完成不能验证流程。输出逐项独立处理，有不足可省略该项。
 可同时返回 checkpoint：{"completedSteps":[],"nextSteps":[],"constraints":[],"unresolvedQuestions":[],"temporaryConclusions":[]}，可选 goal。每项 {"text":"简短内容","evidence":[{"sourceId":"ID","quote":"原文"}]}；目标/约束来自用户，完成步骤来自成功工具，推测保留为临时结论。`;
 const ReviewEnvelopeSchema = Type.Object(
@@ -96,8 +99,10 @@ export class ProjectLearningService {
 	private readonly mutations = new Set<string>();
 	private readonly enqueuing = new Set<string>();
 	private closing = false;
+	private readonly intelligence: MemoryIntelligence;
 	constructor(options: LearningOptions) {
 		this.options = options;
+		this.intelligence = new MemoryIntelligence(options.runtime, options.paths.runtime);
 	}
 	async isBusy(projectId: string): Promise<boolean> {
 		return (
@@ -217,6 +222,16 @@ export class ProjectLearningService {
 		const project = await this.options.projects.get(projectId);
 		const skills = await this.options.skills.discover("project", project);
 		const states = await this.options.repository.skillStates(projectId);
+		const policy = memoryPolicy((await this.options.settings.get("memory.policy"))?.value);
+		for (const state of states) {
+			if (state.status === "managed" && (state.confidence ?? 0.85) < policy.confidenceThreshold) {
+				const skill = skills.find((value) => value.id === state.skillId);
+				if (skill?.enabled) {
+					await this.options.skills.setEnabled(skill.id, false);
+					skill.enabled = false;
+				}
+			}
+		}
 		for (const state of states.filter((value) => value.status === "managed")) {
 			const skill = skills.find((value) => value.id === state.skillId);
 			if (
@@ -230,7 +245,13 @@ export class ProjectLearningService {
 					updatedAt: new Date().toISOString(),
 				});
 		}
-		const ids = new Set(states.filter((state) => state.status !== "rolled_back").map((state) => state.skillId));
+		const ids = new Set(
+			states
+				.filter(
+					(state) => state.status !== "rolled_back" && (state.confidence ?? 0.85) >= policy.confidenceThreshold,
+				)
+				.map((state) => state.skillId),
+		);
 		return skills.filter(
 			(skill) =>
 				ids.has(skill.id) &&
@@ -251,6 +272,28 @@ export class ProjectLearningService {
 		const run = await this.options.runs.get(event.runId);
 		if (!run || run.status === "running") return false;
 		const transcript = await this.options.sessions.readTranscript(session.id);
+		const observations = learningSources(transcript, run.startedAt, run.settledAt ?? event.occurredAt);
+		const toolResults = observations.filter((source) => source.role === "tool");
+		const verified =
+			event.type === "run.completed" &&
+			run.status === "completed" &&
+			(!toolResults.length || toolResults.some((source) => source.verified)) &&
+			(!event.data.acceptance || ["accepted", "not_required"].includes(event.data.acceptance.status));
+		// Persist observations on every outcome, before considering any extraction trigger.
+		await this.options.repository.saveSnapshot({
+			sourceKey: `observation:${run.id}`,
+			projectId: session.projectId,
+			sessionId: session.id,
+			runId: run.id,
+			createdAt: event.occurredAt,
+			unverified: !verified,
+			model: run.model,
+			sources: observations.map((source) => ({
+				...source,
+				runId: run.id,
+				runVerified: verified,
+			})),
+		});
 		// Each Pi assistant message is one public model iteration, including the final answer.
 		const iterations = transcript.filter(
 			(message) =>
@@ -265,14 +308,12 @@ export class ProjectLearningService {
 				id: run.id,
 				startedAt: run.startedAt,
 				settledAt: run.settledAt ?? event.occurredAt,
-				verified:
-					event.type === "run.completed" &&
-					(!event.data.acceptance || ["accepted", "not_required"].includes(event.data.acceptance.status)),
+				verified,
 				iterations,
 			},
 			iterations,
 		);
-		if (!cadence || event.type !== "run.completed") return false;
+		if (!cadence || !verified) return false;
 		const request = learningReviewRequest(
 			transcript
 				.filter(
@@ -294,7 +335,7 @@ export class ProjectLearningService {
 			!(settings.skillInterval > 0 && cadence.iterations >= settings.skillInterval)
 		)
 			return false;
-		const sources = this.windowSources(transcript, cadence.runs);
+		const sources = await this.windowSources(transcript, cadence.runs);
 		await this.enqueue(session.id, sources, `run:${run.id}`, run.id, false, false, {
 			origin: request === "requested" ? "prompt" : "periodic",
 			runIds: cadence.runs.map((value) => value.id),
@@ -406,7 +447,9 @@ export class ProjectLearningService {
 			});
 		}
 		const development = await this.options.sessions.readDevelopmentState(sessionId);
-		const unverified = Boolean(development && !["accepted", "not_required"].includes(development.acceptance.status));
+		const unverified = development
+			? !["accepted", "not_required"].includes(development.acceptance.status)
+			: !context.sources.some((source) => source.role === "tool" && source.verified);
 		const now = new Date().toISOString();
 		await this.options.repository.saveSnapshot({
 			sourceKey: key,
@@ -445,6 +488,7 @@ export class ProjectLearningService {
 			managed,
 			review,
 			diagnostics,
+			signal,
 		);
 		review = await this.save({
 			...review,
@@ -487,12 +531,14 @@ export class ProjectLearningService {
 						},
 					]
 				: [];
-		const sources = window.length ? this.windowSources(transcript, window) : learningSources(transcript);
+		const sources = window.length ? await this.windowSources(transcript, window) : learningSources(transcript);
 		if (!sources.some((source) => source.role === "assistant"))
 			throw new WorkbenchError("conflict", "会话尚无完整回复");
 		const development = await this.options.sessions.readDevelopmentState(sessionId);
+		const observation = run ? await this.options.repository.getSnapshot(`observation:${run.id}`) : undefined;
 		const unverified = Boolean(
-			transcript.at(-1)?.errorMessage ||
+			observation?.unverified ||
+				transcript.at(-1)?.errorMessage ||
 				transcript.at(-1)?.isError ||
 				(development && !["accepted", "not_required"].includes(development.acceptance.status)),
 		);
@@ -510,32 +556,36 @@ export class ProjectLearningService {
 			true,
 			{ origin: "manual", runIds: window.map((value) => value.id) },
 		);
-		await this.options.repository.consumeCadence(
-			sessionId,
-			window.map((value) => value.id),
-		);
+		if (!unverified && run?.status === "completed")
+			await this.options.repository.consumeCadence(
+				sessionId,
+				window.map((value) => value.id),
+			);
 		return review;
 	}
 
-	private windowSources(
+	private async windowSources(
 		transcript: Awaited<ReturnType<SessionService["readTranscript"]>>,
 		runs: Array<{ id: string; startedAt: string; settledAt: string; verified: boolean }>,
-	): LearningSource[] {
+	): Promise<LearningSource[]> {
 		let budget = 24_000;
 		const selected: LearningSource[] = [];
 		// Take bounded evidence from multiple runs, preserving requests before large logs.
-		for (const run of [...runs].reverse()) {
+		for (const [index, run] of [...runs].reverse().entries()) {
 			if (budget <= 0) break;
-			const sources = learningSources(transcript, run.startedAt, run.settledAt);
-			const perRun = Math.min(6000, budget);
+			const observed = await this.options.repository.getSnapshot(`observation:${run.id}`);
+			const sources = observed?.sources ?? learningSources(transcript, run.startedAt, run.settledAt);
+			const perRun = Math.min(6000, Math.floor(budget / (runs.length - index)));
 			let remaining = perRun;
 			const collected: LearningSource[] = [];
 			for (const source of [
 				...sources.filter((source) => source.role === "user"),
-				...sources.filter((source) => source.role !== "user").reverse(),
+				...sources.filter((source) => source.role === "tool" && !source.verified),
+				...sources.filter((source) => source.role === "tool" && source.verified).reverse(),
+				...sources.filter((source) => source.role === "assistant").reverse(),
 			]) {
 				if (remaining <= 0) break;
-				const text = source.text.slice(0, remaining);
+				const text = source.text.slice(0, Math.min(remaining, Math.max(120, Math.floor(perRun / 4))));
 				collected.push({ ...source, text, runId: run.id, runVerified: run.verified });
 				remaining -= text.length;
 			}
@@ -712,6 +762,15 @@ export class ProjectLearningService {
 			evidence.map((item) => ({ ...item, sourceId: references.get(item.sourceId) ?? item.sourceId }));
 		try {
 			signal.throwIfAborted();
+			if (unverified) {
+				await this.save({
+					...review,
+					status: "empty",
+					summary: "成功与失败证据已保留；等待成功后再提取经验",
+					changes: [],
+				});
+				return;
+			}
 			review = await this.save({ ...review, status: "running", summary: "正在提取项目经验" });
 			const project = await this.options.projects.get(review.projectId);
 			if (!review.manual && review.sourceRunId && project.status !== "active") {
@@ -897,7 +956,16 @@ export class ProjectLearningService {
 					diagnostics.push({ kind: "checkpoint", index: 0, message: redactLearningText(getErrorMessage(error)) });
 				}
 			}
-			const changes = await this.prepareChanges(project, output, sources, unverified, managed, review, diagnostics);
+			const changes = await this.prepareChanges(
+				project,
+				output,
+				sources,
+				unverified,
+				managed,
+				review,
+				diagnostics,
+				signal,
+			);
 			review = await this.save({
 				...review,
 				status: changes.length || diagnostics.length ? "ready" : "empty",
@@ -1000,11 +1068,19 @@ export class ProjectLearningService {
 		managed: ManagedSkill[],
 		review: LearningReview,
 		diagnostics: LearningDiagnostic[],
+		signal?: AbortSignal,
 	): Promise<LearningChange[]> {
 		const changes: LearningChange[] = [];
+		if (unverified) {
+			diagnostics.push({ kind: "memory", index: 0, message: "任务尚未成功，已保留观察记录，暂不提取经验" });
+			return changes;
+		}
+		const policy = memoryPolicy((await this.options.settings.get("memory.policy"))?.value);
 		const documents = new Map<string, string | null>();
 		for (const [index, proposed] of output.memories.entries()) {
 			try {
+				if ((proposed.confidence ?? 0.85) < policy.confidenceThreshold)
+					throw new WorkbenchError("invalid_input", "事实置信度低于淘汰阈值");
 				const userPreference = proposed.category === "preference";
 				const memoryPath = userPreference ? "USER.md" : `projects/${project.slug}/AGENTS.md`;
 				if (!documents.has(memoryPath)) {
@@ -1039,12 +1115,6 @@ export class ProjectLearningService {
 						"invalid_input",
 						"用户偏好需要用户明确表达的长期依据，不能从工具或临时任务要求推断",
 					);
-				if (
-					(!item.change || item.change.operation === "create") &&
-					before.replace(/\s+/gu, "").includes(item.text.replace(/\s+/gu, ""))
-				)
-					continue;
-				if (changes.some((change) => change.memory?.text === item.text)) continue;
 				const change: LearningChange = {
 					id: randomUUID(),
 					kind: "memory",
@@ -1057,9 +1127,11 @@ export class ProjectLearningService {
 					memory: item,
 					verifiedRunIds: this.verifiedRuns(item.evidence, sources, review, unverified),
 				};
-				await this.prepareFact(change, review, sources, before);
+				await this.prepareFact(change, review, sources, before, signal);
 				changes.push(change);
+				documents.set(memoryPath, change.after);
 			} catch (error) {
+				signal?.throwIfAborted();
 				diagnostics.push({ kind: "memory", index, message: redactLearningText(getErrorMessage(error)) });
 			}
 		}
@@ -1068,6 +1140,8 @@ export class ProjectLearningService {
 		const slugs = new Set<string>();
 		for (const [index, proposed] of output.skills.entries()) {
 			try {
+				if ((proposed.confidence ?? 0.85) < policy.confidenceThreshold)
+					throw new WorkbenchError("invalid_input", "经验置信度低于淘汰阈值");
 				const preference = proposed.intent === "preference";
 				if (
 					unverified &&
@@ -1081,16 +1155,55 @@ export class ProjectLearningService {
 					preference ? "memory" : "skill",
 					`技能第${index + 1}项`,
 				);
+				if (proposed.targetId) {
+					const target = owned.find((skill) => skill.id === proposed.targetId);
+					if (!target) throw new WorkbenchError("conflict", "目标技能不属于本项目受管理经验");
+					if (
+						!managed.some((skill) => skill.id === target.id) ||
+						states.find((state) => state.skillId === target.id)?.status !== "managed"
+					)
+						throw new WorkbenchError("conflict", "技能已被用户修改、停用或超出完整正文预算，不能自动接管");
+				}
+				if (!preference) {
+					assertSafeLesson(proposed.instructions);
+					assertReusableProcedure(proposed);
+					if (
+						/(?:失败|错误|异常).{0,8}(?:恢复|修复|重试)|(?:恢复|重试).{0,8}(?:失败|错误|异常)|error recovery/iu.test(
+							proposed.instructions,
+						) &&
+						!proposed.recoveredFailures?.length
+					)
+						throw new WorkbenchError("invalid_input", "失败恢复缺少关联的失败原文和后续同类成功证据");
+				}
+				const pendingSkills = changes.filter((change) => change.kind === "skill");
+				const comparison =
+					preference && proposed.patch && proposed.targetId
+						? applyPreferencePatch(
+								managed.find((skill) => skill.id === proposed.targetId)!.content,
+								proposed.patch,
+							)
+						: `${proposed.description}\n${proposed.instructions}`;
+				const similarity = await this.intelligence.similar(
+					"procedure",
+					comparison,
+					[
+						...owned.map((skill) => ({
+							id: skill.id,
+							text: managed.find((value) => value.id === skill.id)?.content ?? skill.description,
+						})),
+						...pendingSkills.map((change) => ({ id: change.id, text: change.after })),
+					],
+					review.model,
+					signal,
+				);
+				if (similarity.relation === "duplicate" && !preference) continue;
+				if (pendingSkills.some((change) => change.id === similarity.targetId))
+					throw new WorkbenchError("conflict", "本批次已有同类方案，请合并为一个完整方案后再提取");
+				if (proposed.targetId && similarity.targetId && proposed.targetId !== similarity.targetId)
+					throw new WorkbenchError("conflict", "模型相似性判断与修订目标不一致");
 				const target = proposed.targetId
 					? owned.find((skill) => skill.id === proposed.targetId)
-					: (owned.find((skill) => skill.slug === proposed.slug) ??
-						owned.find(
-							(skill) =>
-								skill.description.trim() === proposed.description.trim() ||
-								managed
-									.find((value) => value.id === skill.id)
-									?.content.includes(`# ${proposed.title.trim()}\n`),
-						));
+					: owned.find((skill) => skill.id === similarity.targetId);
 				const base = managed.find((skill) => skill.id === target?.id);
 				if (proposed.targetId && !target) throw new WorkbenchError("conflict", "目标技能不属于本项目受管理经验");
 				if (target && (!base || states.find((state) => state.skillId === target.id)?.status !== "managed"))
@@ -1151,7 +1264,6 @@ export class ProjectLearningService {
 							const success = sources.find((source) => source.id === item.sourceId);
 							return (
 								success &&
-								success.runId === failure.runId &&
 								sources.indexOf(success) > sources.indexOf(failure) &&
 								success.toolName === failure.toolName
 							);
@@ -1159,10 +1271,45 @@ export class ProjectLearningService {
 						if (!laterSuccess)
 							throw new WorkbenchError("invalid_input", "失败恢复缺少关联的失败原文和后续同类成功证据");
 					}
+					const relatedFailures = sources.filter(
+						(source) =>
+							source.role === "tool" &&
+							!source.verified &&
+							evidence.some((item) => {
+								const success = sources.find((value) => value.id === item.sourceId);
+								return (
+									success &&
+									success.toolName === source.toolName &&
+									sources.indexOf(success) > sources.indexOf(source) &&
+									(success.runId === source.runId ||
+										recovered.some((quote) =>
+											learningSourceMatches(sources, quote.sourceId).includes(source),
+										))
+								);
+							}),
+					);
+					const caution = relatedFailures.length
+						? relatedFailures
+								.map(
+									(failure) =>
+										`- ${failure.toolName ?? "工具"} 失败的具体原因（工具原文，${failure.id}）：${failure.text.replace(/\s+/gu, " ").slice(0, 300)}`,
+								)
+								.join("\n")
+						: "- 没有观察到与本成功方案关联的失败；不要推断未经验证的失败原因。";
+					const procedure = skill.instructions
+						.replace(/(?:^|\n)## 注意\s*\n[\s\S]*?(?=\n## |$)/gu, "")
+						.replace(/^#{1,2} 成功方案\s*$/gmu, "")
+						.replace(/^## /gmu, "### ")
+						.trim();
+					skill.instructions = `## 成功方案\n\n${procedure}\n\n## 注意\n${caution}`;
+					const timestamp = new Date().toISOString();
 					after = [
 						"---",
 						`name: ${slug}`,
 						`description: ${JSON.stringify(skill.description.trim())}`,
+						`created_at: ${states.find((state) => state.skillId === target?.id)?.createdAt ?? timestamp}`,
+						`last_verified_at: ${timestamp}`,
+						`confidence: ${skill.confidence ?? 0.85}`,
 						"---",
 						"",
 						`# ${skill.title.trim()}`,
@@ -1180,6 +1327,7 @@ export class ProjectLearningService {
 				)
 					throw new WorkbenchError("conflict", "项目经验技能达到20项，请先整理");
 				changes.push({
+					similarity,
 					id: randomUUID(),
 					kind: "skill",
 					operation: target ? "update" : "create",
@@ -1197,6 +1345,7 @@ export class ProjectLearningService {
 					verifiedRunIds: this.verifiedRuns(evidence, sources, review, unverified),
 				});
 			} catch (error) {
+				signal?.throwIfAborted();
 				diagnostics.push({ kind: "skill", index, message: redactLearningText(getErrorMessage(error)) });
 			}
 		}
@@ -1223,6 +1372,7 @@ export class ProjectLearningService {
 		review: LearningReview,
 		sources: LearningSource[],
 		content: string,
+		signal?: AbortSignal,
 	): Promise<void> {
 		const item = change.memory!;
 		const kind = change.relativePath === "USER.md" ? "user" : "project";
@@ -1231,6 +1381,26 @@ export class ProjectLearningService {
 			const source = sources.find((value) => value.id === evidence.sourceId);
 			return source?.role === "user" && source.text.includes(item.text);
 		});
+		if (!change.similarity) {
+			const facts = semanticBlocks(content, kind, change.relativePath, projectId)
+				.map((block) => block.record)
+				.filter((fact) => fact.status === "active" && (!fact.category || fact.category === item.category));
+			change.similarity = await this.intelligence.similar(
+				item.category ?? "fact",
+				item.text,
+				facts.map((fact) => ({ id: fact.id, text: fact.text })),
+				review.model,
+				signal,
+			);
+			const target = facts.find((fact) => fact.id === change.similarity?.targetId);
+			if (target && (!item.change || item.change.operation === "create")) {
+				if (change.similarity.relation === "related")
+					throw new WorkbenchError("conflict", "存在同类型相似事实，需提供修订目标和版本后再提取");
+				item.change = { operation: "merge", targetId: target.id, expectedVersion: target.version };
+			}
+			if (target && item.change?.targetId && item.change.targetId !== target.id)
+				throw new WorkbenchError("conflict", "模型相似性判断与事实目标不一致");
+		}
 		const prepared = await this.options.semantic?.prepare(
 			content,
 			kind,
@@ -1239,7 +1409,13 @@ export class ProjectLearningService {
 			{
 				kind,
 				proposedText: item.text,
-				semanticChange: item.change,
+				semanticChange: {
+					...item.change,
+					operation: item.change?.operation ?? "create",
+					confidence: item.confidence ?? (userFact ? 1 : 0.85),
+				},
+				category: item.category,
+				futureUse: item.futureUse,
 				reason: `${review.origin === "agent" ? "主 Agent 主动提炼" : "项目复盘提炼"}：${item.futureUse ?? "重要长期事实"}`,
 				sessionId: review.sessionId,
 				runId: review.sourceRunId,
@@ -1281,6 +1457,12 @@ export class ProjectLearningService {
 		const skill = await this.options.skills.get(change.skillId);
 		const content = await this.currentContent(change);
 		const state: LearningSkillState = {
+			confidence: change.skill?.confidence ?? old?.confidence ?? 0.85,
+			createdAt: old?.createdAt ?? review.createdAt,
+			lastVerifiedAt:
+				change.skill?.intent === "preference"
+					? (old?.lastVerifiedAt ?? old?.updatedAt ?? review.createdAt)
+					: review.createdAt,
 			skillId: skill.id,
 			projectId: review.projectId,
 			reviewId: review.id,
@@ -1382,6 +1564,8 @@ export class ProjectLearningService {
 							project,
 						});
 						change.skillId = skill.id;
+						const created = await this.options.skills.readContent(skill.id);
+						if (created.content !== after) await this.options.skills.saveContent(skill.id, after, created.hash);
 						if (!skill.enabled) await this.options.skills.setEnabled(skill.id, true);
 					} else {
 						if (!change.skillId) throw new WorkbenchError("conflict", "技能索引缺失，请重新复盘");

@@ -183,6 +183,7 @@ test("generic response conventions respect scope without promoting unconfirmed m
 				proposedText: "当用户询问“未经审核问题”时，回答“未审核模型结果”。",
 				sessionId: sourceSession.id,
 				reason: "未经用户确认的模型资料",
+				semanticChange: { operation: "create", confidence: 0.7 },
 			},
 			"unconfirmed-model-material",
 			"unverified",

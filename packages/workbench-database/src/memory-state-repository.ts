@@ -6,7 +6,7 @@ import type {
 	MemoryStateRepository,
 	WorkingCheckpoint,
 } from "@earendil-works/workbench-core";
-import { WorkbenchError } from "@earendil-works/workbench-core";
+import { memoryConfidence, WorkbenchError } from "@earendil-works/workbench-core";
 import type { WorkbenchDatabase } from "./database.ts";
 import { knowledgeTerms } from "./knowledge-repository.ts";
 
@@ -17,6 +17,10 @@ interface JsonRow {
 function episodeScope(query: EpisodeQuery): { clauses: string[]; parameters: SQLInputValue[] } {
 	const clauses = [query.projectId ? "project_id = ?" : "project_id IS NULL"];
 	const parameters: SQLInputValue[] = query.projectId ? [query.projectId] : [];
+	if (query.minConfidence !== undefined) {
+		clauses.push("COALESCE(json_extract(data_json, '$.confidence'), 0.9) >= ?");
+		parameters.push(query.minConfidence);
+	}
 	for (const [column, value] of [
 		["session_id", query.sessionId],
 		["task_id", query.taskId],
@@ -51,6 +55,7 @@ export class SqliteMemoryStateRepository implements MemoryStateRepository {
 		return row ? (JSON.parse(row.data_json) as WorkingCheckpoint) : undefined;
 	}
 	async saveCheckpoint(value: WorkingCheckpoint, expectedVersion: number): Promise<WorkingCheckpoint | undefined> {
+		value = { ...value, confidence: memoryConfidence({ confidence: value.confidence ?? 0.9 }) };
 		if (value.version !== expectedVersion + 1) throw new Error("Checkpoint version must increase by one");
 		const values = [
 			value.projectId ?? null,
@@ -115,6 +120,7 @@ export class SqliteMemoryStateRepository implements MemoryStateRepository {
 		return row ? (JSON.parse(row.data_json) as EpisodicMemory) : undefined;
 	}
 	async saveEpisode(value: EpisodicMemory): Promise<EpisodicMemory> {
+		value = { ...value, confidence: memoryConfidence({ confidence: value.confidence ?? 0.9 }) };
 		this.database
 			.prepare(
 				"INSERT INTO episodic_memories(id, project_id, session_id, run_id, task_id, occurred_at, outcome, search_text, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO NOTHING",
@@ -195,6 +201,7 @@ export class SqliteMemoryStateRepository implements MemoryStateRepository {
 		return rows.map((row) => JSON.parse(row.data_json) as EpisodicMemory);
 	}
 	async updateEpisode(value: EpisodicMemory, expectedVersion: number): Promise<boolean> {
+		value = { ...value, confidence: memoryConfidence({ confidence: value.confidence ?? 0.9 }) };
 		if (value.version !== expectedVersion + 1) throw new Error("Episode version must increase by one");
 		return (
 			this.database

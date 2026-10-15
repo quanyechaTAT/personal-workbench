@@ -7,7 +7,7 @@ import { Parse } from "typebox/value";
 import { expect, test, vi } from "vitest";
 import { applyPreferencePatch } from "../../workbench-core/src/learning-curation.ts";
 import { createAssistantFixture } from "./assistant-fixture.ts";
-import { LEARNED_INSTRUCTIONS, type LearningFixture } from "./project-learning-fixture.ts";
+import { LEARNED_INSTRUCTIONS, type LearningFixture, similarityResponse } from "./project-learning-fixture.ts";
 
 const ContextResult = Type.Object({
 	sources: Type.Array(
@@ -349,6 +349,7 @@ test("main Agent creates a class procedure then replaces one preference in place
 					{ stopReason: "toolUse" },
 				);
 			},
+			(context) => similarityResponse(context, "related"),
 			(context) => {
 				expect(toolText(context)).toContain('"status": "applied"');
 				return fauxAssistantMessage("后续按新顺序处理。");

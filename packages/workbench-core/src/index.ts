@@ -28,7 +28,9 @@ export {
 	type SaveMcpConnectionInput,
 } from "./mcp-connection-service.ts";
 export type { McpConnectionTestResult, McpConnector } from "./mcp-ports.ts";
+export { MemoryIntelligence, type MemorySummarySource } from "./memory-intelligence.ts";
 export * from "./memory-layers.ts";
+export * from "./memory-policy.ts";
 export { type MemoryScope, MemoryService, type ProposeMemoryInput } from "./memory-service.ts";
 export {
 	MemoryStateService,
@@ -58,6 +60,7 @@ export {
 	type SendWorkbenchMessageInput,
 	SessionService,
 } from "./session-service.ts";
+export { type SessionWorkspaceDisposition, SessionWorkspaceService } from "./session-workspace.ts";
 export { SettingsService } from "./settings-service.ts";
 export { inspectSkillFiles, type SkillFileManifest } from "./skill-files.ts";
 export {

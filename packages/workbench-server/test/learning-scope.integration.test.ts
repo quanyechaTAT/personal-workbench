@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { Parse } from "typebox/value";
 import { expect, test, vi } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
+import { similarityResponse } from "./project-learning-fixture.ts";
 
 const Sources = Type.Object({
 	sources: Type.Array(Type.Object({ id: Type.String(), role: Type.String(), text: Type.String() })),
@@ -113,6 +114,7 @@ test("periodic and prompt review route preferences to USER.md and environments t
 			(context) => {
 				expect(context.tools).toHaveLength(0);
 				const user = input(context).sources.find((source) => source.text.includes(replacement))!;
+				fixture.faux.appendResponses([(context) => similarityResponse(context, "related")]);
 				return fauxAssistantMessage(
 					JSON.stringify({
 						summary: "用户更正长期偏好",

@@ -19,6 +19,7 @@ export const LearningEvidenceSchema = Type.Object(
 const EvidenceSchema = LearningEvidenceSchema;
 export const LearningMemorySchema = Type.Object(
 	{
+		confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
 		text: Type.String({ minLength: 1, maxLength: 1000 }),
 		category: Type.Optional(
 			Type.Union(
@@ -37,6 +38,7 @@ export const LearningMemorySchema = Type.Object(
 );
 export const LearningSkillSchema = Type.Object(
 	{
+		confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
 		slug: Type.String({ pattern: "^learned-[a-z0-9]+(?:-[a-z0-9]+)*$", maxLength: 64 }),
 		title: Type.String({ minLength: 1, maxLength: 100 }),
 		description: Type.String({ minLength: 1, maxLength: 500 }),
@@ -129,6 +131,9 @@ export interface LearningDiagnostic {
 	message: string;
 }
 export interface LearningSkillState {
+	confidence?: number;
+	createdAt?: string;
+	lastVerifiedAt?: string;
 	skillId: string;
 	projectId: string;
 	reviewId?: string;
@@ -155,6 +160,7 @@ export interface LearningExperiences {
 	skills: Array<{ skill: WorkbenchSkill; title: string; management?: LearningSkillState; uses: LearningSkillUse[] }>;
 }
 export interface LearningChange {
+	similarity?: { relation: "distinct" | "duplicate" | "related"; targetId?: string; reason: string };
 	operation?: "create" | "update" | "merge" | "supersede" | "invalidate" | "rollback";
 	targetId?: string;
 	baseVersion?: number;

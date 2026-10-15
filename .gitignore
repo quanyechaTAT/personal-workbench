@@ -46,6 +46,11 @@ coverage/
 /workspace/
 /state/
 /credentials/
+# Memory indexes and session files when the repository is used as a workspace
+/memory/
+/chats/
+/archive/chats/
+**/.workbench-session.json
 *.db
 *.db-*
 *.sqlite

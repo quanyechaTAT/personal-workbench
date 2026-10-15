@@ -19,6 +19,7 @@ export interface MemoryEvidence {
 }
 
 export interface WorkingCheckpoint {
+	confidence?: number;
 	review?: { status: "queued" | "running" | "complete" | "failed" | "interrupted"; error?: string };
 	sessionId: string;
 	projectId?: string;
@@ -40,6 +41,7 @@ export interface WorkingCheckpoint {
 }
 
 export interface EpisodicMemory {
+	confidence?: number;
 	id: string;
 	projectId?: string;
 	sessionId: string;
@@ -60,6 +62,8 @@ export interface EpisodicMemory {
 }
 
 export interface MemoryContextFragment {
+	timestamp?: string;
+	confidence?: number;
 	id: string;
 	layer: MemoryLayer | "skill";
 	label: string;
@@ -103,6 +107,7 @@ export interface ContextAssemblyResult extends MemoryRetrievalResult {
 }
 
 export interface EpisodeQuery {
+	minConfidence?: number;
 	projectId?: string;
 	sessionId?: string;
 	taskId?: string;

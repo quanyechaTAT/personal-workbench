@@ -226,6 +226,52 @@ test("archive filtering keeps each chat in its own project", async () => {
 	}
 });
 
+test.each(["migrate", "keep", "delete"] as const)(
+	"deletion waits for confirmation and saves the selected workspace action: %s",
+	async (action) => {
+		const page = await mount();
+		try {
+			vi.spyOn(api, "sessionWorkspace").mockResolvedValue({
+				path: "F:/workspace/chats/personal-old",
+				migrationPath: "F:/workspace/archive/chats/personal-old",
+				action: "migrate",
+			});
+			const save = vi
+				.spyOn(api, "setSetting")
+				.mockResolvedValue({ key: "session.workspaceDisposition.personal-old", value: action, version: 1 });
+			const remove = vi.spyOn(api, "sessionAction").mockResolvedValue({ deleted: true });
+			await act(async () => page.button("会话操作 普通旧会话").click());
+			await act(async () =>
+				[...page.container.querySelectorAll(".session-action-menu button")]
+					.find((button) => button.textContent === "删除会话")
+					?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+			);
+			await act(async () => {
+				await vi.waitFor(() =>
+					expect(page.container.querySelector("dialog")?.textContent).toContain("F:/workspace/archive"),
+				);
+			});
+			expect(remove).not.toHaveBeenCalled();
+			expect(save).not.toHaveBeenCalled();
+			const dialog = page.container.querySelector("dialog")!;
+			const select = dialog.querySelector("select")!;
+			expect(select.value).toBe("migrate");
+			await act(async () => {
+				select.value = action;
+				select.dispatchEvent(new Event("change", { bubbles: true }));
+			});
+			await act(async () => dialog.querySelector("form")!.requestSubmit());
+			await act(async () => {
+				await vi.waitFor(() => expect(remove).toHaveBeenCalledWith("personal-old", "delete"));
+			});
+			expect(save).toHaveBeenCalledWith("session.workspaceDisposition.personal-old", action);
+			expect(save.mock.invocationCallOrder[0]).toBeLessThan(remove.mock.invocationCallOrder[0]);
+		} finally {
+			await page.close();
+		}
+	},
+);
+
 test("a project group prepares an unnamed draft and only creates a chat when its first message is sent", async () => {
 	const page = await mount();
 	try {

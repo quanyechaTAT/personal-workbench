@@ -47,6 +47,7 @@ function loadMigrations(): Migration[] {
 		"025_learning_cadence",
 		"026_background_learning",
 		"027_project_deletion",
+		"028_memory_lifecycle",
 	].map((name, index) => {
 		const sql = readFileSync(new URL(`./migrations/${name}.sql`, import.meta.url), "utf8");
 		return { version: index + 1, name, sql, checksum: createHash("sha256").update(sql).digest("hex") };

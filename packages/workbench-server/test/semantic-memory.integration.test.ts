@@ -92,12 +92,13 @@ test("external Markdown edits lose confirmation, retain stable identity/history 
 			project.memoryFilePath,
 			(await readFile(project.memoryFilePath, "utf8")).replace("Python 3.12", "Python 3.13"),
 		);
-		expect((await memory.search({ project }, "Python"))[0]?.snippet).toContain("unknown");
-		const records = await fixture.application.services.semantic.list({ project });
+		expect(await memory.search({ project }, "Python")).toEqual([]);
+		const records = await fixture.application.services.semantic.list({ project }, true);
 		expect(records[0]).toMatchObject({
 			id: candidate.id,
 			version: 2,
 			confirmation: "unknown",
+			confidence: 0.4,
 			conflict: "external_edit",
 		});
 		expect((await fixture.application.services.semantic.history(candidate.id, { project }))[1]?.text).toContain(

@@ -28,6 +28,7 @@ import { MemoryManifest, SessionMemoryPanel } from "./memory-layers-panel.tsx";
 import { MessageQueue } from "./message-queue.tsx";
 import { MessageUsage } from "./message-usage.tsx";
 import { ToolResult } from "./search-results.tsx";
+import { SessionDeleteDialog } from "./session-delete-dialog.tsx";
 import { SessionSidebar } from "./session-sidebar.tsx";
 import { SessionTitleDialog } from "./session-title-dialog.tsx";
 import { Screenshot } from "./tool-images.tsx";
@@ -227,6 +228,7 @@ export function ChatPage({ lockedProjectId }: { lockedProjectId?: string } = {})
 	const [selectedCapabilities, setSelectedCapabilities] = useState<ChatCapability[]>([]);
 	const [sessionView, setSessionView] = useState<"active" | "archived">("active");
 	const [sessionMenu, setSessionMenu] = useState<string>();
+	const [deletingSession, setDeletingSession] = useState<WorkbenchSession>();
 	const [namingSession, setNamingSession] = useState<WorkbenchSession | "new">();
 	const [namingTitle, setNamingTitle] = useState("");
 	const [namingProjectId, setNamingProjectId] = useState<string>();
@@ -595,9 +597,20 @@ export function ChatPage({ lockedProjectId }: { lockedProjectId?: string } = {})
 		inputRef.current?.focus();
 	};
 	const sessionAction = useMutation({
-		mutationFn: ({ id, action }: { id: string; action: "archive" | "restore" | "delete" }) =>
-			api.sessionAction(id, action),
+		mutationFn: async ({
+			id,
+			action,
+			workspace,
+		}: {
+			id: string;
+			action: "archive" | "restore" | "delete";
+			workspace?: "keep" | "delete" | "migrate";
+		}) => {
+			if (action === "delete") await api.setSetting(`session.workspaceDisposition.${id}`, workspace ?? "migrate");
+			return api.sessionAction(id, action);
+		},
 		onSuccess: async (_result, { id, action }) => {
+			setDeletingSession(undefined);
 			setSessionMenu(undefined);
 			if (selectedSessionId === id && action !== "restore") resetDraft();
 			if (action === "delete") {
@@ -612,13 +625,11 @@ export function ChatPage({ lockedProjectId }: { lockedProjectId?: string } = {})
 		},
 	});
 	const actOnSession = (session: WorkbenchSession, action: "archive" | "restore" | "delete") => {
-		if (
-			action === "delete" &&
-			!window.confirm(
-				`删除会话“${label(session.title)}”及其对话历史？此操作无法撤销。项目、任务、记忆和成果文件会保留。`,
-			)
-		)
+		if (action === "delete") {
+			sessionAction.reset();
+			setDeletingSession(session);
 			return;
+		}
 		sessionAction.mutate({ id: session.id, action });
 	};
 	const chatCommands = useChatCommands({
@@ -993,6 +1004,15 @@ export function ChatPage({ lockedProjectId }: { lockedProjectId?: string } = {})
 								: prepareNewChat(profileId, namingProjectId)
 							: renameSession.mutate({ session: namingSession, title })
 					}
+				/>
+			)}
+			{deletingSession && (
+				<SessionDeleteDialog
+					session={deletingSession}
+					pending={sessionAction.isPending}
+					error={sessionAction.error}
+					onClose={() => setDeletingSession(undefined)}
+					onDelete={(workspace) => sessionAction.mutate({ id: deletingSession.id, action: "delete", workspace })}
 				/>
 			)}
 			<SessionSidebar

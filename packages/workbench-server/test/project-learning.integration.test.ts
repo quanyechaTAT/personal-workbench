@@ -7,7 +7,13 @@ import { semanticBlocks } from "@earendil-works/workbench-core";
 import type { LearningReview } from "@earendil-works/workbench-core/contracts";
 import { expect, test, vi } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
-import { completeLearningTask, LEARNED_FACT, type LearningFixture, reviewOutput } from "./project-learning-fixture.ts";
+import {
+	completeLearningTask,
+	LEARNED_FACT,
+	type LearningFixture,
+	reviewOutput,
+	similarityResponse,
+} from "./project-learning-fixture.ts";
 
 test("independent tool-derived facts apply after the first verified run", async () => {
 	const fixture = await createAssistantFixture();
@@ -15,6 +21,12 @@ test("independent tool-derived facts apply after the first verified run", async 
 		const project = await fixture.application.createProject({ name: "事实晋升 边界" });
 		const derive = (context: Parameters<typeof reviewOutput>[0]) => {
 			const output = reviewOutput(context);
+			fixture.faux.appendResponses([
+				() =>
+					fauxAssistantMessage(
+						JSON.stringify({ relation: "distinct", reason: "文件用途与工作区位置属于不同事实。" }),
+					),
+			]);
 			return {
 				...output,
 				skills: [],
@@ -167,6 +179,10 @@ test("first success saves a managed Skill, later correction revises the same ski
 		await completeLearningTask(fixture, project.id, "periodic", (context) => {
 			const output = reviewOutput(context);
 			output.skills[0].instructions += "\n再次执行前核对项目目录是否存在。";
+			fixture.faux.appendResponses([
+				(input) => similarityResponse(input),
+				(input) => similarityResponse(input, "related"),
+			]);
 			return output;
 		});
 		let second = await settled(fixture, project.id);
@@ -174,8 +190,8 @@ test("first success saves a managed Skill, later correction revises the same ski
 			second = await fixture.application.services.learning.get(second.id);
 			expect(second.changes.every((change) => change.status === "applied")).toBe(true);
 		});
-		expect(second.changes).toHaveLength(1);
-		expect(second.changes[0].skillId).toBe(firstSkill.skillId);
+		expect(second.changes).toHaveLength(2);
+		expect(second.changes.find((change) => change.kind === "skill")?.skillId).toBe(firstSkill.skillId);
 		expect((await fixture.application.repositories.learning.skillStates(project.id))[0].version).toBe(2);
 		expect(
 			semanticBlocks(
@@ -191,7 +207,13 @@ test("first success saves a managed Skill, later correction revises the same ski
 			`${content.content}\n用户手动维护的步骤。\n`,
 			content.hash,
 		);
-		await completeLearningTask(fixture, project.id, "periodic");
+		await completeLearningTask(fixture, project.id, "periodic", (context) => {
+			fixture.faux.appendResponses([
+				(input) => similarityResponse(input),
+				(input) => similarityResponse(input, "related"),
+			]);
+			return reviewOutput(context);
+		});
 		const skipped = await settled(fixture, project.id);
 		expect(skipped.diagnostics?.[0].message).toContain("用户修改");
 		expect((await fixture.application.repositories.learning.skillStates(project.id))[0].status).toBe("detached");
@@ -496,9 +518,18 @@ test("an unverified code change cannot become a reliable Skill even when the fil
 		expect(response.status).toBe(202);
 		const run = (await response.json()) as { runId: string };
 		expect(await (await fixture.request(`/runs/${run.runId}/events`)).text()).toContain('"type":"run.completed"');
+		await vi.waitFor(async () =>
+			expect(await fixture.application.repositories.learning.getSnapshot(`observation:${run.runId}`)).toMatchObject({
+				unverified: true,
+			}),
+		);
+		expect(await fixture.application.services.learning.list(project.id)).toEqual([]);
+		expect(fixture.faux.getPendingResponseCount()).toBe(1);
+		await fixture.application.services.learning.reviewSession(session.id);
 		const review = await settled(fixture, project.id);
-		expect(review.status).toBe("ready");
-		expect(review.diagnostics?.[0].message).toContain("未通过验收");
+		expect(review.status).toBe("empty");
+		expect(review.changes).toEqual([]);
+		expect(fixture.faux.getPendingResponseCount()).toBe(1);
 		expect(await fixture.application.services.learning.reusableSkills(project.id)).toHaveLength(0);
 		expect(await readFile(join(project.workspacePath, "script.py"), "utf8")).toBe("print(1)\n");
 	} finally {
