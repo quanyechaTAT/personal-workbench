@@ -6,36 +6,30 @@ import { Type } from "typebox";
 import { sandboxCommand } from "./execution-sandbox.ts";
 import { type TerminalResult, TerminalSessions } from "./terminal-sessions.ts";
 
+// Use cmdlets and core types so the host also works under Windows sandbox ConstrainedLanguage.
 const SHELL_SCRIPT = `
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
-$shell = [PowerShell]::Create()
-$initialized = $false
-try {
-  while ($null -ne ($line = [Console]::ReadLine())) {
-    $request = ConvertFrom-Json -InputObject $line
-    try {
-      if (-not $initialized) {
-        $directory = $request.cwd.Replace("'", "''")
-        $shell.AddScript("Set-Location -LiteralPath '$directory'").Invoke() | Out-Null
-        $shell.Commands.Clear()
-        $initialized = $true
-      }
-      $shell.Streams.Error.Clear()
-      $shell.Runspace.SessionStateProxy.SetVariable('LASTEXITCODE', 0)
-      $output = $shell.AddScript($request.command, $false).Invoke()
-      $text = ($output | Out-String -Width 256)
-      $errors = ($shell.Streams.Error | Out-String -Width 256)
-      $exitCode = $shell.Runspace.SessionStateProxy.GetVariable('LASTEXITCODE')
-      $failed = $shell.HadErrors -or ($null -ne $exitCode -and $exitCode -ne 0)
-      $result = @{ output = ($text + $errors); isError = [bool]$failed; exitCode = $exitCode }
-    } catch { $result = @{ output = $_.Exception.Message; isError = $true; exitCode = $null } }
-    finally { $shell.Commands.Clear() }
-    if ($result.output.Length -gt 64000) { $result.output = $result.output.Substring(0, 64000) + [Environment]::NewLine + '[output truncated]' }
-    [Console]::WriteLine('WORKBENCH_SHELL:' + (ConvertTo-Json -InputObject $result -Compress))
+$ProgressPreference = 'SilentlyContinue'
+$__workbenchInitialized = $false
+while ($__workbenchLine = Read-Host) {
+  $__workbenchRequest = ConvertFrom-Json -InputObject $__workbenchLine
+  try {
+    if (-not $__workbenchInitialized) {
+      Set-Location -LiteralPath $__workbenchRequest.cwd
+      $__workbenchInitialized = $true
+    }
+    $global:LASTEXITCODE = 0
+    $__workbenchErrors = @()
+    $__workbenchText = Invoke-Expression -Command $__workbenchRequest.command -ErrorVariable __workbenchErrors 2>&1 | Out-String -Width 256
+    $__workbenchFailed = $__workbenchErrors.Count -gt 0 -or $LASTEXITCODE -ne 0
+    $__workbenchResult = @{ output = ($__workbenchText + ($__workbenchErrors | Out-String -Width 256)); isError = [bool]$__workbenchFailed; exitCode = $LASTEXITCODE }
+  } catch { $__workbenchResult = @{ output = ($_ | Out-String -Width 256); isError = $true; exitCode = $null } }
+  if ($__workbenchResult.output.Length -gt 64000) { $__workbenchResult.output = $__workbenchResult.output.Substring(0, 64000) + [char]10 + '[output truncated]' }
+  $__workbenchJson = ConvertTo-Json -InputObject $__workbenchResult -Compress
+  $__workbenchAscii = foreach ($__workbenchCharacter in $__workbenchJson.ToCharArray()) {
+    if ([int]$__workbenchCharacter -gt 127) { '\\u{0:x4}' -f [int]$__workbenchCharacter } else { $__workbenchCharacter }
   }
-} finally { $shell.Dispose() }
+  Write-Output ('WORKBENCH_SHELL:' + ($__workbenchAscii -join ''))
+}
 `;
 
 interface ShellResult {
@@ -136,7 +130,8 @@ export function createPersistentShell(
 					[
 						"-NoLogo",
 						"-NoProfile",
-						"-NonInteractive",
+						"-OutputFormat",
+						"Text",
 						"-EncodedCommand",
 						Buffer.from(SHELL_SCRIPT, "utf16le").toString("base64"),
 					],
@@ -203,7 +198,12 @@ export function createPersistentShell(
 			try {
 				const result = await new Promise<ShellResult>((resolve, reject) => {
 					pending = { resolve, reject };
-					child!.stdin.write(`${JSON.stringify({ cwd, command: input.command })}\n`, (error) => {
+					// ASCII JSON avoids changing Console encodings, which ConstrainedLanguage disallows.
+					const request = JSON.stringify({ cwd, command: input.command }).replace(
+						/[^\x00-\x7f]/g,
+						(character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+					);
+					child!.stdin.write(`${request}\n`, (error) => {
 						if (error) {
 							reject(error);
 							void close();

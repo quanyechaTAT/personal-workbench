@@ -36,36 +36,50 @@ jobs:
         run: npm run build:offline
 
       - name: Check
+        id: check
         run: npm run check
 
       - name: Test Workbench runtime
         run: npm test --workspace=@earendil-works/workbench-runtime
 
       - name: Test Workbench core
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: npm test --workspace=@earendil-works/workbench-core
 
       - name: Test Workbench database
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: npm test --workspace=@earendil-works/workbench-database
 
       - name: Test Workbench MCP
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: npm test --workspace=@earendil-works/workbench-mcp
 
       - name: Test Workbench Pi runtime
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
+        env:
+          WORKBENCH_DEBUG_TERMINAL: "1"
         run: npm test --workspace=@earendil-works/workbench-runtime-pi
 
       - name: Test Workbench server
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: npm test --workspace=@earendil-works/workbench-server
 
       - name: Test Workbench UI
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
         run: npm test --workspace=@earendil-works/workbench-ui
 
       - name: Check browser tests
+        if: ${{ !cancelled() && steps.check.outcome == 'success' }}
+        id: browser-check
         run: npm run check:e2e --workspace=@earendil-works/workbench-ui
 
       - name: Install test browser
+        if: ${{ !cancelled() && steps.browser-check.outcome == 'success' }}
+        id: browser-install
         run: npx playwright install chromium
 
       - name: Browser acceptance
+        if: ${{ !cancelled() && steps.browser-install.outcome == 'success' }}
         env:
           WORKBENCH_BROWSER_CHANNEL: chromium
         run: npm run test:e2e --workspace=@earendil-works/workbench-ui

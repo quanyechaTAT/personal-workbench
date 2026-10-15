@@ -108,8 +108,11 @@ export class TerminalSessions {
 			subscriptions: [],
 		};
 		this.sessions.set(session.id, session);
+		if (process.env.WORKBENCH_DEBUG_TERMINAL === "1") console.error("[DEBUG-pty-start]", pty.pid, command);
 		session.subscriptions.push(
 			pty.onData((data) => {
+				if (process.env.WORKBENCH_DEBUG_TERMINAL === "1")
+					console.error("[DEBUG-pty-data]", pty.pid, JSON.stringify(data));
 				session.buffer += stripVTControlCharacters(data).replaceAll("\r\n", "\n");
 				if (session.buffer.length > MAX_BUFFER) {
 					session.buffer = session.buffer.slice(-MAX_BUFFER);
@@ -119,6 +122,7 @@ export class TerminalSessions {
 		);
 		session.subscriptions.push(
 			pty.onExit(({ exitCode }) => {
+				if (process.env.WORKBENCH_DEBUG_TERMINAL === "1") console.error("[DEBUG-pty-exit]", pty.pid, exitCode);
 				session.exitCode = exitCode;
 				for (const resolve of session.waiters) resolve();
 				for (const subscription of session.subscriptions) subscription.dispose();
