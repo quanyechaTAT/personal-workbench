@@ -20,6 +20,7 @@ type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
 import { hasAzureOpenAICredentials, resolveAzureDeploymentName } from "./azure-utils.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
+import { getOpenRouterSonnetTestModel, getXiaomiTestModel } from "./catalog-test-models.ts";
 import { hasCloudflareAiGatewayCredentials, hasCloudflareWorkersAICredentials } from "./cloudflare-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -491,7 +492,7 @@ describe("totalTokens field", () => {
 			"mimo-v2.5-pro - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("xiaomi", "mimo-v2.5-pro");
+				const llm = getXiaomiTestModel("xiaomi");
 
 				console.log(`\nXiaomi MiMo / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.XIAOMI_API_KEY });
@@ -514,7 +515,7 @@ describe("totalTokens field", () => {
 			"mimo-v2.5-pro - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+				const llm = getXiaomiTestModel("xiaomi-token-plan-cn");
 
 				console.log(`\nXiaomi MiMo Token Plan CN / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, {
@@ -539,7 +540,7 @@ describe("totalTokens field", () => {
 			"mimo-v2.5-pro - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+				const llm = getXiaomiTestModel("xiaomi-token-plan-ams");
 
 				console.log(`\nXiaomi MiMo Token Plan AMS / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, {
@@ -564,7 +565,7 @@ describe("totalTokens field", () => {
 			"mimo-v2.5-pro - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+				const llm = getXiaomiTestModel("xiaomi-token-plan-sgp");
 
 				console.log(`\nXiaomi MiMo Token Plan SGP / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, {
@@ -710,7 +711,7 @@ describe("totalTokens field", () => {
 			"anthropic/claude-sonnet-4 - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("openrouter", "anthropic/claude-sonnet-4");
+				const llm = getOpenRouterSonnetTestModel();
 
 				console.log(`\nOpenRouter / ${llm.id}:`);
 				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.OPENROUTER_API_KEY });
