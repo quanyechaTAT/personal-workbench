@@ -246,7 +246,8 @@ describe("Personal Workbench end-to-end", () => {
 			await second.request(`/api/v1/artifacts?projectId=${project.id}`)
 		).json()) as Array<{ name: string }>;
 		expect(restoredArtifacts).toHaveLength(1);
-		expect(await readFile(join(root, "workspace", "projects", "cv-learning", "MEMORY.md"), "utf8")).toContain(
+		const restoredProject = await second.application.services.projects.get(project.id);
+		expect(await readFile(restoredProject.memoryFilePath, "utf8")).toContain(
 			"Begin CV Learning with image classification",
 		);
 		const resume = await second.request(`/api/v1/sessions/${session.id}/resume`, { method: "POST" });

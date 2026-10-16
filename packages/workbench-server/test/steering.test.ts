@@ -10,16 +10,20 @@ test("steering reaches the current Pi run after a waiting tool and persists in o
 		const session = await fixture.application.createSession({ profileSlug: "standard" });
 		const userInputs: string[][] = [];
 		const respond = (context: Context) => {
+			expect(JSON.stringify(context.messages.at(-1))).toContain("workbench-working-memory");
 			userInputs.push(
 				context.messages
 					.filter((message) => message.role === "user")
 					.map((message) =>
-						typeof message.content === "string"
+						(typeof message.content === "string"
 							? message.content
 							: message.content
 									.filter((part) => part.type === "text")
 									.map((part) => part.text)
-									.join("\n"),
+									.join("\n")
+						)
+							.split(/\n\s*<workbench-working-memory\b/u)[0]
+							.trimEnd(),
 					),
 			);
 			return fauxAssistantMessage("已按追加指令继续");

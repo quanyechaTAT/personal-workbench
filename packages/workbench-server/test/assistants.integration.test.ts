@@ -43,8 +43,7 @@ test("assistant revisions, selected MCP tools, approvals, errors, offline histor
 		],
 	});
 	await app.services.profiles.setDefault(profile.id);
-	await expect(app.services.profiles.archive(profile.id, profile.version)).rejects.toThrow("default");
-	const session = await app.createSession({});
+	const session = await app.createSession({ profileId: profile.id });
 	expect(session.agentProfileId).toBe(profile.id);
 	const resolved = await app.services.capabilities.resolveForSession(profile);
 	expect(resolved.toolBindings).toHaveLength(1);

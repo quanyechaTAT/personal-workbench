@@ -10,16 +10,20 @@ test("queued messages can be edited, removed and steered before the remaining me
 		const session = await fixture.application.createSession({ profileSlug: "standard" });
 		const requests: string[][] = [];
 		const respond = (context: Context) => {
+			expect(JSON.stringify(context.messages.at(-1))).toContain("workbench-working-memory");
 			requests.push(
 				context.messages
 					.filter((message) => message.role === "user")
 					.map((message) =>
-						typeof message.content === "string"
+						(typeof message.content === "string"
 							? message.content
 							: message.content
 									.filter((part) => part.type === "text")
 									.map((part) => part.text)
-									.join("\n"),
+									.join("\n")
+						)
+							.split(/\n\s*<workbench-working-memory\b/u)[0]
+							.trimEnd(),
 					),
 			);
 			return fauxAssistantMessage("已处理");

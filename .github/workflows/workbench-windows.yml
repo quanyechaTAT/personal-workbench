@@ -56,8 +56,6 @@ jobs:
 
       - name: Test Workbench Pi runtime
         if: ${{ !cancelled() && steps.check.outcome == 'success' }}
-        env:
-          WORKBENCH_DEBUG_TERMINAL: "1"
         run: npm test --workspace=@earendil-works/workbench-runtime-pi
 
       - name: Test Workbench server

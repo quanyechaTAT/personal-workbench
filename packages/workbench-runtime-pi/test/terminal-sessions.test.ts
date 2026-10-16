@@ -13,6 +13,7 @@ async function createHarness(script: string) {
 		{
 			PATH: process.env.PATH,
 			PATHEXT: process.env.PATHEXT,
+			PSModulePath: process.env.PSModulePath,
 			SystemRoot: process.env.SystemRoot,
 			TEMP: process.env.TEMP,
 			TMP: process.env.TMP,
@@ -146,3 +147,28 @@ test("explicit close returns unread final output once", async () => {
 		await harness.close();
 	}
 }, 15_000);
+
+test.runIf(process.platform === "win32")(
+	"PowerShell commands retain their supported length through console initialization",
+	async () => {
+		const harness = await createHarness("");
+		try {
+			let result = await harness.terminals.start(`$null = '${"x".repeat(4000)}'; Write-Output long-command-ok`, 0);
+			let output = result.output;
+			await vi.waitFor(
+				async () => {
+					if (result.status === "running") {
+						result = await harness.terminals.read(result.session_id, "", 250);
+						output += result.output;
+					}
+					expect(result.status, output).toBe("exited");
+				},
+				{ timeout: 6000 },
+			);
+			expect(result.exit_code, output).toBe(0);
+			expect(output).toContain("long-command-ok");
+		} finally {
+			await harness.close();
+		}
+	},
+);

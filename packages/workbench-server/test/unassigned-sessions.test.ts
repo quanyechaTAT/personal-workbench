@@ -11,7 +11,7 @@ test("chats without projects have independent folders and retain them after rest
 		const second = await fixture.application.createSession({ profileSlug: "standard" });
 		expect(await fixture.application.services.projects.list()).toEqual([]);
 		expect(first.projectId).toBeUndefined();
-		expect(first.title).toBe("新对话");
+		expect(first.title).toBe("");
 		expect(first.cwd).not.toBe(fixture.application.paths.workspace);
 		expect(first.cwd).not.toBe(second.cwd);
 		await writeFile(join(first.cwd, "private.txt"), "first chat");

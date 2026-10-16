@@ -73,22 +73,32 @@ export class TerminalSessions {
 		const bash = shell === "bash" || (!windows && shell !== "powershell") ? getShellConfig() : undefined;
 		if (windows && bash?.commandTransport === "stdin" && this.sandbox.mode !== "danger-full-access")
 			throw new Error("Windows 原生沙箱不能隔离 WSL 命令；请使用 Git Bash，或在 WSL 中运行工作台。");
-		const script = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n[Console]::InputEncoding = [System.Text.Encoding]::UTF8\n$OutputEncoding = [System.Text.Encoding]::UTF8\n$ErrorActionPreference = 'Stop'\n$global:LASTEXITCODE = 0\ntry { & {\n${command}\n}; exit ([int]$global:LASTEXITCODE) } catch { Write-Error $_ -ErrorAction Continue; exit 1 }`;
+		const script = `$OutputEncoding = [System.Text.Encoding]::UTF8\n$ProgressPreference = 'SilentlyContinue'\n$ErrorActionPreference = 'Stop'\n$global:LASTEXITCODE = 0\ntry { & {\n${command}\n}; exit ([int]$global:LASTEXITCODE) } catch { Write-Error $_ -ErrorAction Continue; exit 1 }`;
+		const bootstrap =
+			"$__workbenchScript = $env:WORKBENCH_TERMINAL_SCRIPT; Remove-Item Env:WORKBENCH_TERMINAL_SCRIPT; Invoke-Expression $__workbenchScript";
 		const launch = sandboxCommand(
 			this.cwd,
-			bash?.shell ?? "powershell.exe",
+			bash?.shell ??
+				(windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe") : "powershell.exe"),
 			bash
 				? bash.commandTransport === "stdin"
 					? bash.args
 					: [...bash.args, command]
 				: windows
-					? ["-NoLogo", "-NoProfile", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
+					? [
+							"/d",
+							"/s",
+							"/c",
+							// Set the console code page before PowerShell caches its streams; CLM forbids Console setters.
+							`chcp 65001>nul && powershell.exe -NoLogo -NoProfile -OutputFormat Text -EncodedCommand ${Buffer.from(bootstrap, "utf16le").toString("base64")}`,
+						]
 					: ["-c", command],
 			this.sandbox,
 		);
 		const pty = spawnPty(launch.executable, launch.args, {
 			cwd: this.cwd,
-			env: this.environment,
+			// Keep the command out of cmd.exe's 8191-character argument limit; the bootstrap removes it before execution.
+			env: windows && !bash ? { ...this.environment, WORKBENCH_TERMINAL_SCRIPT: script } : this.environment,
 			name: "xterm-256color",
 			cols: 160,
 			rows: 40,
@@ -108,11 +118,8 @@ export class TerminalSessions {
 			subscriptions: [],
 		};
 		this.sessions.set(session.id, session);
-		if (process.env.WORKBENCH_DEBUG_TERMINAL === "1") console.error("[DEBUG-pty-start]", pty.pid, command);
 		session.subscriptions.push(
 			pty.onData((data) => {
-				if (process.env.WORKBENCH_DEBUG_TERMINAL === "1")
-					console.error("[DEBUG-pty-data]", pty.pid, JSON.stringify(data));
 				session.buffer += stripVTControlCharacters(data).replaceAll("\r\n", "\n");
 				if (session.buffer.length > MAX_BUFFER) {
 					session.buffer = session.buffer.slice(-MAX_BUFFER);
@@ -122,7 +129,6 @@ export class TerminalSessions {
 		);
 		session.subscriptions.push(
 			pty.onExit(({ exitCode }) => {
-				if (process.env.WORKBENCH_DEBUG_TERMINAL === "1") console.error("[DEBUG-pty-exit]", pty.pid, exitCode);
 				session.exitCode = exitCode;
 				for (const resolve of session.waiters) resolve();
 				for (const subscription of session.subscriptions) subscription.dispose();

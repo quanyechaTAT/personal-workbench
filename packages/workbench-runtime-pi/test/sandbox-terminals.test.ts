@@ -9,6 +9,7 @@ import { TerminalSessions } from "../src/terminal-sessions.ts";
 const environment = {
 	PATH: process.env.PATH,
 	PATHEXT: process.env.PATHEXT,
+	PSModulePath: process.env.PSModulePath,
 	SystemRoot: process.env.SystemRoot,
 	TEMP: process.env.TEMP,
 	TMP: process.env.TMP,
@@ -187,7 +188,7 @@ test("sandbox commands cannot read protected state or modify agent and Git contr
 	}
 }, 30_000);
 
-test("network-disabled sandbox blocks an otherwise reachable public documentation page", async () => {
+test("network-disabled sandbox blocks an otherwise reachable outbound TCP connection", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
 	const baseline = new TerminalSessions(root, environment, {
 		mode: "danger-full-access",
@@ -200,8 +201,17 @@ test("network-disabled sandbox blocks an otherwise reachable public documentatio
 		writableRoots: [],
 	});
 	try {
-		const command =
-			"$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri https://learn.chatgpt.com/docs/sandboxing | Select-Object -ExpandProperty StatusCode";
+		await writeFile(
+			join(root, "network.cjs"),
+			`
+const socket = require('node:net').connect(443, 'github.com');
+const timeout = setTimeout(() => { process.exitCode = 1; socket.destroy(); }, 8000);
+socket.on('connect', () => { console.log('network-connected'); socket.end(); });
+socket.on('error', () => { process.exitCode = 1; });
+socket.on('close', () => clearTimeout(timeout));
+`,
+		);
+		const command = `& '${process.execPath.replaceAll("'", "''")}' ./network.cjs`;
 		for (const [runner, allowed] of [
 			[baseline, true],
 			[terminals, false],
@@ -220,8 +230,11 @@ test("network-disabled sandbox blocks an otherwise reachable public documentatio
 			);
 			if (allowed) {
 				expect(result.exit_code, output).toBe(0);
-				expect(output).toContain("200");
-			} else expect(result.exit_code, output).not.toBe(0);
+				expect(output).toContain("network-connected");
+			} else {
+				expect(result.exit_code, output).not.toBe(0);
+				expect(output).not.toContain("network-connected");
+			}
 		}
 	} finally {
 		await baseline.dispose();

@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { type Context, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { expect, test, vi } from "vitest";
 import { createAssistantFixture } from "./assistant-fixture.ts";
 
@@ -17,46 +17,53 @@ test("long commands yield a terminal session, accept input and return subsequent
 		let terminalId = "missing";
 		const results: unknown[] = [];
 		const failures: boolean[] = [];
+		let output = "";
+		let phase: "ready" | "input" | "exit" = "ready";
+		let polls = 0;
+		const continueTerminal = (context: Context) => {
+			const result = context.messages.at(-1);
+			if (result?.role !== "toolResult") throw new Error("Expected terminal tool result");
+			const details = result.details;
+			if (
+				typeof details !== "object" ||
+				details === null ||
+				!("session_id" in details) ||
+				typeof details.session_id !== "string" ||
+				!("output" in details) ||
+				typeof details.output !== "string"
+			)
+				throw new Error(`Invalid terminal result: ${JSON.stringify(result)}`);
+			results.push(details);
+			terminalId = details.session_id;
+			output += details.output;
+			if (phase === "exit" && "status" in details && details.status === "exited") {
+				failures.push(result.isError);
+				return fauxAssistantMessage("完成");
+			}
+			if (++polls > 60) throw new Error(`Terminal did not finish: ${output}`);
+			let chars: string | undefined;
+			if (phase === "ready" && output.includes("terminal-ready")) {
+				chars = "中文输入\r";
+				phase = "input";
+			} else if (phase === "input" && output.includes("received:中文输入")) {
+				chars = "quit\r";
+				phase = "exit";
+			}
+			fixture.faux.appendResponses([continueTerminal]);
+			return fauxAssistantMessage(
+				fauxToolCall("write_stdin", { session_id: terminalId, chars, yield_time_ms: 250 }),
+				{ stopReason: "toolUse" },
+			);
+		};
 		fixture.faux.setResponses([
 			fauxAssistantMessage(
 				fauxToolCall("exec_command", {
 					command: `& '${process.execPath.replaceAll("'", "''")}' '${script.replaceAll("'", "''")}'`,
-					yield_time_ms: 1000,
+					yield_time_ms: 0,
 				}),
 				{ stopReason: "toolUse" },
 			),
-			(context) => {
-				const result = context.messages.at(-1);
-				if (result?.role === "toolResult") {
-					results.push(result.details);
-					const details: unknown = result.details;
-					if (
-						typeof details === "object" &&
-						details !== null &&
-						"session_id" in details &&
-						typeof details.session_id === "string"
-					)
-						terminalId = details.session_id;
-				}
-				return fauxAssistantMessage(
-					fauxToolCall("write_stdin", { session_id: terminalId, chars: "中文输入\r", yield_time_ms: 1000 }),
-					{ stopReason: "toolUse" },
-				);
-			},
-			(context) => {
-				const result = context.messages.at(-1);
-				if (result?.role === "toolResult") results.push(result.details);
-				return fauxAssistantMessage(
-					fauxToolCall("write_stdin", { session_id: terminalId, chars: "quit\r", yield_time_ms: 2000 }),
-					{ stopReason: "toolUse" },
-				);
-			},
-			(context) => {
-				const result = context.messages.at(-1);
-				if (result?.role === "toolResult") results.push(result.details);
-				if (result?.role === "toolResult") failures.push(result.isError);
-				return fauxAssistantMessage("完成");
-			},
+			continueTerminal,
 		]);
 		const context = await fixture.application.contextForSession(session.id);
 		const run = fixture.application.events.start(session.id, { text: "启动终端并输入", context: context.runtime });
@@ -65,7 +72,7 @@ test("long commands yield a terminal session, accept input and return subsequent
 		}
 		expect(results[0]).toMatchObject({ status: "running", session_id: expect.any(String), exit_code: null });
 		expect(JSON.stringify(results)).toContain("received:中文输入");
-		expect(results[2]).toMatchObject({ status: "exited", exit_code: 7 });
+		expect(results.at(-1)).toMatchObject({ status: "exited", exit_code: 7 });
 		expect(failures).toEqual([true]);
 	} finally {
 		await fixture.close();
@@ -104,7 +111,8 @@ for (const profile of ["standard", "minimal", "ptc"] as const) {
 				/* drain */
 			}
 			await vi.waitFor(async () => expect(await readFile(join(session.cwd, "port.txt"), "utf8")).toMatch(/^\d+$/u), {
-				timeout: 6000,
+				// A cold native sandbox can still be initializing after the tool has yielded.
+				timeout: 15000,
 			});
 			const port = await readFile(join(session.cwd, "port.txt"), "utf8");
 			const url = `http://127.0.0.1:${port}`;
@@ -161,5 +169,5 @@ for (const profile of ["standard", "minimal", "ptc"] as const) {
 		} finally {
 			await fixture.close();
 		}
-	}, 30_000);
+	}, 45_000);
 }

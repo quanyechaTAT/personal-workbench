@@ -69,6 +69,11 @@ test.each(["ask", "full-access"] as const)(
 			const previousDesktop = desktopPath;
 			desktopPath = join(fixture.root, "重定向桌面 中文");
 			await mkdir(desktopPath);
+			await fixture.application.services.settings.set("sandbox.policy", {
+				mode: "workspace-write",
+				networkAccess: false,
+				writableRoots: [desktopPath],
+			});
 			const target = join(desktopPath, "桌面验证.txt");
 			fixture.faux.setResponses([
 				(context) => {

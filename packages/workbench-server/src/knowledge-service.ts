@@ -732,9 +732,16 @@ export class KnowledgeService {
 	}
 	async retryDocument(project: Project, id: string, describeScans?: boolean): Promise<KnowledgeDocument> {
 		if (this.stopping) throw new WorkbenchError("conflict", "知识库正在关闭");
-		if (this.jobs.has(id)) throw new WorkbenchError("conflict", "文档仍在处理中");
 		if (this.descriptionReviews.has(id)) throw new WorkbenchError("conflict", "图像描述核对正在保存，请稍后重试");
 		const document = await this.getDocument(project, id);
+		const job = this.jobs.get(id);
+		if (job) {
+			if (document.status !== "failed" && document.status !== "ready")
+				throw new WorkbenchError("conflict", "文档仍在处理中");
+			// A terminal status can be visible before diagnostic persistence and queue cleanup finish.
+			await job.completion;
+			if (this.stopping) throw new WorkbenchError("conflict", "知识库正在关闭");
+		}
 		const queued: KnowledgeDocument = {
 			...document,
 			describeScans: describeScans ?? document.describeScans,

@@ -32,6 +32,7 @@ test.runIf(process.platform === "win32")(
 		const shell = createPersistentShell(root, {
 			Path: process.env.Path,
 			PATHEXT: process.env.PATHEXT,
+			PSModulePath: process.env.PSModulePath,
 			SystemRoot: process.env.SystemRoot,
 			TEMP: process.env.TEMP,
 			TMP: process.env.TMP,

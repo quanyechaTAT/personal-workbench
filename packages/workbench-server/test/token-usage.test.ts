@@ -65,7 +65,8 @@ test("usage counts all model steps, separates cache input and survives reconnect
 			fauxAssistantMessage("压缩摘要"),
 			fauxAssistantMessage("本轮摘要"),
 		]);
-		const second = fixture.application.events.start(session.id, { text: "继续", context: context.runtime });
+		const resumedContext = await fixture.application.contextForSession(session.id);
+		const second = fixture.application.events.start(session.id, { text: "继续", context: resumedContext.runtime });
 		for await (const _entry of fixture.application.events.subscribe(second.runId)) {
 			/* drain */
 		}
