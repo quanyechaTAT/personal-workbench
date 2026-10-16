@@ -16,7 +16,7 @@ vi.mock("node-pty", async (importOriginal) => {
 					/-EncodedCommand ([A-Za-z0-9+/=]+)$/u,
 					(_match, encoded: string) => {
 						const script = Buffer.from(encoded, "base64").toString("utf16le");
-						return `-EncodedCommand ${Buffer.from(`$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n${script}`, "utf16le").toString("base64")}`;
+						return `-EncodedCommand ${Buffer.from(`if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }\n${script}`, "utf16le").toString("base64")}`;
 					},
 				);
 			}

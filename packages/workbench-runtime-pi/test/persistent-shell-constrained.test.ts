@@ -15,7 +15,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 			if (index > 0) {
 				const script = Buffer.from(argumentsWithMode[index], "base64").toString("utf16le");
 				argumentsWithMode[index] = Buffer.from(
-					`$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n${script}`,
+					`if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }\n${script}`,
 					"utf16le",
 				).toString("base64");
 			}
