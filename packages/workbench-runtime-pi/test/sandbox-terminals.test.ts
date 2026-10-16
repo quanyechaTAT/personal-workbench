@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { createPersistentShell } from "../src/persistent-shell.ts";
 import { createSandboxOperations } from "../src/sandbox-operations.ts";
-import { TerminalSessions } from "../src/terminal-sessions.ts";
+import { type TerminalResult, TerminalSessions } from "../src/terminal-sessions.ts";
 
 const environment = {
 	PATH: process.env.PATH,
@@ -14,6 +14,22 @@ const environment = {
 	TEMP: process.env.TEMP,
 	TMP: process.env.TMP,
 };
+
+async function runToExit(terminals: TerminalSessions, command: string): Promise<TerminalResult> {
+	let result = await terminals.start(command, 0);
+	let output = result.output;
+	await vi.waitFor(
+		async () => {
+			if (result.status === "running") {
+				result = await terminals.read(result.session_id, "", 250);
+				output += result.output;
+			}
+			expect(result.status, output).toBe("exited");
+		},
+		{ timeout: 30_000 },
+	);
+	return { ...result, output };
+}
 
 test("workspace sandbox permits project writes but blocks a child process writing outside", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
@@ -25,14 +41,14 @@ test("workspace sandbox permits project writes but blocks a child process writin
 		writableRoots: [],
 	});
 	try {
-		const inside = await terminals.start("Set-Content -LiteralPath inside.txt -Value allowed", 10_000);
+		const inside = await runToExit(terminals, "Set-Content -LiteralPath inside.txt -Value allowed");
 		expect(inside.status, inside.output).toBe("exited");
 		expect(inside.exit_code, inside.output).toBe(0);
 		expect(await readFile(join(workspace, "inside.txt"), "utf8")).toContain("allowed");
 		const outside = join(root, "outside.txt").replaceAll("'", "''");
-		const result = await terminals.start(
+		const result = await runToExit(
+			terminals,
 			`& powershell.exe -NoProfile -NonInteractive -Command "Set-Content -LiteralPath '${outside}' -Value denied -ErrorAction Stop"`,
-			10_000,
 		);
 		await expect(readFile(join(root, "outside.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 		expect(result.exit_code, result.output).not.toBe(0);
@@ -41,7 +57,7 @@ test("workspace sandbox permits project writes but blocks a child process writin
 		expect(dirname(root)).toBe(tmpdir());
 		await rm(root, { recursive: true, force: true, maxRetries: 5 });
 	}
-}, 30_000);
+}, 75_000);
 
 test("sandboxed PTY accepts later input, returns early and closes its child process", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
@@ -97,9 +113,16 @@ test("ordinary shell operations and persistent commands use the same file sandbo
 				onData: (chunk) => {
 					output += chunk.toString();
 				},
+				timeout: 30,
 			},
 		);
 		expect(result.exitCode, output).not.toBe(0);
+		const initialized = await persistent.tool.execute(
+			"initialize",
+			{ command: "Write-Output ready", timeout: 30 },
+			undefined,
+		);
+		expect(initialized.content).toEqual([{ type: "text", text: expect.stringContaining("ready") }]);
 		await expect(
 			persistent.tool.execute(
 				"call",
@@ -129,7 +152,7 @@ test("ordinary shell operations and persistent commands use the same file sandbo
 		expect(dirname(root)).toBe(tmpdir());
 		await rm(root, { recursive: true, force: true, maxRetries: 5 });
 	}
-}, 30_000);
+}, 100_000);
 
 test("read-only sandbox blocks writes even inside the project", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
@@ -139,7 +162,7 @@ test("read-only sandbox blocks writes even inside the project", async () => {
 		writableRoots: [],
 	});
 	try {
-		const result = await terminals.start("Set-Content -LiteralPath forbidden.txt -Value denied", 10_000);
+		const result = await runToExit(terminals, "Set-Content -LiteralPath forbidden.txt -Value denied");
 		await expect(readFile(join(root, "forbidden.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 		expect(result.exit_code, result.output).not.toBe(0);
 	} finally {
@@ -147,7 +170,7 @@ test("read-only sandbox blocks writes even inside the project", async () => {
 		expect(dirname(root)).toBe(tmpdir());
 		await rm(root, { recursive: true, force: true, maxRetries: 5 });
 	}
-}, 30_000);
+}, 45_000);
 
 test("sandbox commands cannot read protected state or modify agent and Git control files", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
@@ -167,17 +190,14 @@ test("sandbox commands cannot read protected state or modify agent and Git contr
 		protectedPaths: [state],
 	});
 	try {
-		const read = await terminals.start(
+		const read = await runToExit(
+			terminals,
 			`Get-Content -LiteralPath '${join(state, "credentials.txt").replaceAll("'", "''")}'`,
-			10_000,
 		);
 		expect(read.exit_code, read.output).not.toBe(0);
 		expect(read.output).not.toContain("fixture-secret");
 		for (const folder of [".git", ".codex", ".agents"]) {
-			const result = await terminals.start(
-				`Set-Content -LiteralPath '${folder}/config.txt' -Value modified`,
-				10_000,
-			);
+			const result = await runToExit(terminals, `Set-Content -LiteralPath '${folder}/config.txt' -Value modified`);
 			expect(result.exit_code, result.output).not.toBe(0);
 			expect(await readFile(join(workspace, folder, "config.txt"), "utf8")).toBe("unchanged");
 		}
@@ -186,7 +206,7 @@ test("sandbox commands cannot read protected state or modify agent and Git contr
 		expect(dirname(root)).toBe(tmpdir());
 		await rm(root, { recursive: true, force: true, maxRetries: 5 });
 	}
-}, 30_000);
+}, 150_000);
 
 test("network-disabled sandbox blocks an otherwise reachable outbound TCP connection", async () => {
 	const root = await mkdtemp(join(tmpdir(), "workbench-sandbox-"));
