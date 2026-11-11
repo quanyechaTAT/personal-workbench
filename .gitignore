@@ -6,6 +6,8 @@ node_modules/
 dist/
 .artifacts/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
