@@ -6,7 +6,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { type Project, WorkbenchError, writeTextAtomically } from "@earendil-works/workbench-core";
 import type { SaveModelProviderInput } from "@earendil-works/workbench-core/contracts";
-import type { RuntimeModelRef, RuntimeUsage } from "@earendil-works/workbench-runtime";
+import type { AgentRuntime, RuntimeModelRef, RuntimeUsage } from "@earendil-works/workbench-runtime";
 import { type Static, Type } from "typebox";
 import { createWorkbenchApplication, type WorkbenchApplication } from "./application.ts";
 
@@ -75,6 +75,13 @@ export interface HaluMemOptions {
 	qaPrompt: string;
 	provider?: Omit<SaveModelProviderInput, "expectedVersion">;
 	createApplication?: (root: string) => Promise<WorkbenchApplication>;
+	onQuotaExhausted?: () => void;
+}
+
+export class HaluMemQuotaExhausted extends Error {
+	constructor() {
+		super("HaluMem evaluated model quota exhausted");
+	}
 }
 
 /** Imports the corpus into native Pi history, then uses the unchanged project review and retrieval services. */
@@ -83,10 +90,38 @@ export class HaluMemService {
 	private readonly users = new Map<string, Promise<UserWorkspace>>();
 	private readonly queues = new Map<string, Promise<unknown>>();
 	private readonly controller = new AbortController();
+	private readonly modelQuota = new AbortController();
 	readonly model: RuntimeModelRef;
 	constructor(options: HaluMemOptions) {
 		this.options = { ...options, root: resolve(options.root) };
 		this.model = options.model ?? { provider: "openai-codex", modelId: "gpt-6-luna" };
+	}
+	assertModelQuota(): void {
+		this.modelQuota.signal.throwIfAborted();
+	}
+	private watchModelQuota(runtime: AgentRuntime): void {
+		const send = runtime.sendMessage.bind(runtime);
+		const quota = this.modelQuota;
+		const onQuotaExhausted = this.options.onQuotaExhausted;
+		runtime.sendMessage = async function* (sessionId, input, options) {
+			quota.signal.throwIfAborted();
+			const signal = options.signal ? AbortSignal.any([options.signal, quota.signal]) : quota.signal;
+			for await (const event of send(sessionId, input, { ...options, signal })) {
+				if (
+					event.type === "run.failed" &&
+					/(?:\bHTTP\s*402\b|payment required|insufficient[_ -](?:quota|balance|credits)|usage_limit_reached|usage_not_included|hit your ChatGPT usage limit|usage limit reached|quota (?:exceeded|exhausted)|exceeded your current quota|out of budget|billing_hard_limit_reached|余额不足|额度(?:不足|已用尽))/iu.test(
+						event.data.message,
+					)
+				) {
+					if (!quota.signal.aborted) {
+						quota.abort(new HaluMemQuotaExhausted());
+						onQuotaExhausted?.();
+					}
+					quota.signal.throwIfAborted();
+				}
+				yield event;
+			}
+		};
 	}
 	async addDialogue(input: AddInput, external?: AbortSignal): Promise<Receipt> {
 		if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(input.session_id))
@@ -213,9 +248,9 @@ export class HaluMemService {
 			}
 			let review = receipt.review_id
 				? await application.services.learning.get(receipt.review_id)
-				: await application.services.learning.reviewSession(session.id);
+				: await application.services.learning.reviewSession(session.id, this.modelQuota.signal);
 			if (["failed", "interrupted", "cancelled"].includes(review.status))
-				review = await application.services.learning.retry(review.id);
+				review = await application.services.learning.retry(review.id, this.modelQuota.signal);
 			receipt.review_id = review.id;
 			await writeTextAtomically(path, JSON.stringify(receipt));
 			while (
@@ -401,10 +436,18 @@ export class HaluMemService {
 	}
 	private async exclusive<T>(input: { run_id: string; user_id: string }, operation: () => Promise<T>): Promise<T> {
 		const key = this.directory(input);
-		const pending = (this.queues.get(key) ?? Promise.resolve()).catch(() => undefined).then(operation);
+		const pending = (this.queues.get(key) ?? Promise.resolve())
+			.catch(() => undefined)
+			.then(() => {
+				this.assertModelQuota();
+				return operation();
+			});
 		this.queues.set(key, pending);
 		try {
 			return await pending;
+		} catch (error) {
+			this.assertModelQuota();
+			throw error;
 		} finally {
 			if (this.queues.get(key) === pending) this.queues.delete(key);
 		}
@@ -429,6 +472,7 @@ export class HaluMemService {
 				embeddingEnvFile: this.options.embeddingEnvFile,
 			}));
 		try {
+			this.watchModelQuota(application.runtime);
 			await application.services.settings.set("models.default", {
 				provider: this.model.provider,
 				modelId: this.model.modelId,

@@ -57,6 +57,7 @@ const service = new HaluMemService({
 	agentDir: process.env.HALUMEM_AGENT_DIR,
 	embeddingEnvFile: process.env.HALUMEM_EMBEDDING_ENV_FILE,
 	qaPrompt: prompts.PROMPT_MEMZERO,
+	onQuotaExhausted: () => console.error("HaluMem evaluated model quota exhausted"),
 	provider: { name: provider.name, baseUrl: provider.baseUrl, api: provider.api, enabled: true, models: [model] },
 });
 const server = new HaluMemServer(service, token);

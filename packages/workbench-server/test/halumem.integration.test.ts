@@ -163,12 +163,36 @@ test("replays native roles, freezes extraction snapshots, updates memories and i
 		expect((await service.addDialogue(retryInput)).memories.map((item) => item.memory)).toEqual(["I live in Oslo."]);
 		expect(fixture.faux.getPendingResponseCount()).toBe(0);
 		await expect(service.getDialogueMemory({ ...scope, session_id: "../escape" })).rejects.toThrow("Invalid session");
+		const quotaInput = {
+			...dialogue,
+			session_id: "third",
+			dialogue: [
+				{ role: "user" as const, content: "I now live in Bern." },
+				{ role: "assistant" as const, content: "Noted." },
+			],
+		};
+		fixture.faux.setResponses([
+			extraction("I now live in Bern.", {
+				operation: "supersede",
+				targetId: second.memories[0].id,
+				expectedVersion: second.memories[0].version,
+			}),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" }),
+			fauxAssistantMessage("Should never be requested"),
+		]);
+		await expect(service.addDialogue(quotaInput)).rejects.toThrow("evaluated model quota exhausted");
+		await expect(service.getDialogueMemory(quotaInput)).rejects.toThrow("still pending");
+		await expect(
+			service.retrieveMemory({ run_id: "smoke", user_id: "bob", query: "city", top_k: 20, generate_answer: true }),
+		).rejects.toThrow("evaluated model quota exhausted");
+		expect(fixture.faux.getPendingResponseCount()).toBe(1);
 		await service.close();
 		const reopened = new HaluMemService(options);
 		try {
 			expect((await reopened.getDialogueMemory({ ...scope, session_id: "first" })).memories[0].memory).toBe(
 				"I live in Paris.",
 			);
+			expect((await reopened.retrieveMemory({ ...scope, query: "city", top_k: 20 })).context).toContain("Berlin");
 		} finally {
 			await reopened.close();
 		}

@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import halumem
-from halumem_judge import JudgeProxy, cacheable, normalize_completion
+from halumem_judge import JudgeProxy, QuotaExhausted, cacheable, normalize_completion
 
 
 def empty_records():
@@ -21,6 +21,34 @@ def empty_records():
 
 
 class HaluMemTests(unittest.TestCase):
+    def test_judge_quota_stops_other_prompts_but_generic_429_does_not(self):
+        def http_error(code, body):
+            return HTTPError("https://judge.example/v1/chat/completions", code, "provider error", {}, io.BytesIO(body))
+
+        for quota in [http_error(402, b""), http_error(429, b'{"error":{"code":"insufficient_quota"}}')]:
+            with self.subTest(status=quota.code), tempfile.TemporaryDirectory() as directory:
+                rate_limit = http_error(429, b'{"error":{"code":"rate_limit_exceeded"}}')
+                with patch("halumem_judge.urlopen", side_effect=[rate_limit, quota]) as upstream:
+                    with JudgeProxy("https://judge.example/v1", "fixture-only", "fixture-judge", directory) as proxy:
+                        with self.assertRaises(HTTPError):
+                            proxy.request({"model": "fixture-judge", "messages": [{"content": "one"}]})
+                        self.assertFalse(proxy.quota_exhausted.is_set())
+                        with self.assertRaises(QuotaExhausted):
+                            proxy.request({"model": "fixture-judge", "messages": [{"content": "two"}]})
+                        self.assertTrue(proxy.quota_exhausted.is_set())
+                        with self.assertRaises(QuotaExhausted):
+                            proxy.request({"model": "fixture-judge", "messages": [{"content": "three"}]})
+                        self.assertEqual(upstream.call_count, 2)
+
+    def test_replay_quota_is_not_retried_and_stops_other_users(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(halumem, "api", side_effect=QuotaExhausted("evaluated")) as api:
+            root = Path(directory)
+            stop = threading.Event()
+            for user in ["alice", "bob"]:
+                with self.assertRaises(QuotaExhausted):
+                    halumem.session_api(root, user, "session-0", "/add-dialogue", {}, 3, stop)
+            self.assertEqual(api.call_count, 1)
+
     def test_parallel_users_keep_official_session_order_even_when_source_timestamps_regress(self):
         barrier = threading.Barrier(2)
         observed = {"alice": [], "bob": []}

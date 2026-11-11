@@ -3,11 +3,26 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import re
 import secrets
 import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+
+class QuotaExhausted(RuntimeError):
+    def __init__(self, stage):
+        self.stage = stage
+        super().__init__(f"HaluMem {stage} model quota exhausted")
+
+
+QUOTA_ERROR = re.compile(
+    r"insufficient[ _-](?:quota|balance|credits)|usage_limit_reached|usage_not_included|"
+    r"billing_hard_limit_reached|exceeded your current quota|quota (?:exceeded|exhausted)|"
+    r"usage limit reached|out of budget|credit balance is too low|余额不足|额度(?:不足|已用尽)",
+    re.IGNORECASE,
+)
 
 
 def normalize_completion(completion):
@@ -53,6 +68,7 @@ class JudgeProxy:
         self.token = secrets.token_urlsafe(32)
         self.cache_root = Path(cache_root)
         self.lock = threading.Lock()
+        self.quota_exhausted = threading.Event()
         self.request_locks = {}
         self.stats = {"network_requests": 0, "cache_hits": 0, "failures": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "fenced_json_responses": 0, "response_models": []}
         proxy = self
@@ -75,6 +91,8 @@ class JudgeProxy:
                         raise ValueError("Unexpected judge model or streaming request")
                     result = proxy.request(payload)
                     self.send_result(200, result)
+                except QuotaExhausted as error:
+                    self.send_result(402, {"error": {"code": "quota_exhausted", "message": str(error)}})
                 except HTTPError as error:
                     self.send_result(error.code, {"error": {"message": "Configured judge upstream rejected the request"}})
                 except (ValueError, TypeError, OSError, URLError):
@@ -119,11 +137,24 @@ class JudgeProxy:
                     self.stats["cache_hits"] += 1
                 return json.loads(cached.read_text(encoding="utf-8"))
             with self.lock:
+                if self.quota_exhausted.is_set():
+                    raise QuotaExhausted("judge")
                 self.stats["network_requests"] += 1
             try:
                 request = Request(self.endpoint, data=body, headers={"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"})
                 with urlopen(request, timeout=120) as response:
                     result = json.load(response)
+                if isinstance(result, dict) and QUOTA_ERROR.search(json.dumps(result.get("error"), ensure_ascii=False)):
+                    self.quota_exhausted.set()
+                    raise QuotaExhausted("judge")
+            except HTTPError as error:
+                with self.lock:
+                    self.stats["failures"] += 1
+                with error:
+                    if error.code == 402 or QUOTA_ERROR.search(error.read(8192).decode("utf-8", errors="replace")):
+                        self.quota_exhausted.set()
+                        raise QuotaExhausted("judge") from None
+                raise
             except (OSError, ValueError):
                 with self.lock:
                     self.stats["failures"] += 1

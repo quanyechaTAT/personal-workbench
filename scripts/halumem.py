@@ -2,7 +2,7 @@
 """Pinned HaluMem data, native Workbench replay, and official judge integration."""
 import argparse
 import ast
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 import hashlib
 import importlib.util
 import json
@@ -11,13 +11,14 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from threading import Event
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from halumem_judge import JudgeProxy
+from halumem_judge import JudgeProxy, QuotaExhausted
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / ".cache" / "halumem"
@@ -127,23 +128,33 @@ def api(path, body=None):
         with urlopen(request, timeout=600) as response:
             return json.load(response)
     except HTTPError as error:
+        if error.code == 402:
+            error.close()
+            raise QuotaExhausted("evaluated") from None
         try:
-            detail = json.load(error).get("error", {}).get("message", "Evaluation API rejected the request")
+            with error:
+                detail = json.load(error).get("error", {}).get("message", "Evaluation API rejected the request")
         except (ValueError, AttributeError):
             detail = "Evaluation API rejected the request"
         raise RuntimeError(f"HaluMem API {error.code}: {detail}") from None
 
 
-def session_api(output, user_id, session_id, path, body, attempts):
+def session_api(output, user_id, session_id, path, body, attempts, quota_stop=None):
     key = hashlib.sha256(json.dumps({"path": path, "body": body}, sort_keys=True).encode()).hexdigest()
     cached = output / "requests" / user_id / session_id / (key + ".json")
     if cached.exists():
         return json.loads(cached.read_text(encoding="utf-8"))
     for attempt in range(1, attempts + 1):
+        if quota_stop is not None and quota_stop.is_set():
+            raise QuotaExhausted("evaluated")
         try:
             value = api(path, body)
             save(cached, value)
             return value
+        except QuotaExhausted:
+            if quota_stop is not None:
+                quota_stop.set()
+            raise
         except (RuntimeError, URLError, TimeoutError, ConnectionError) as error:
             transient = not isinstance(error, RuntimeError) or re.match(r"HaluMem API (429|502|503|504):", str(error))
             print(json.dumps({"event": "request.failed", "user": user_id, "session": session_id, "path": path.split("?")[0], "attempt": attempt, "retrying": bool(transient and attempt < attempts), "error": str(error)}), flush=True)
@@ -152,13 +163,15 @@ def session_api(output, user_id, session_id, path, body, attempts):
             time.sleep(min(30, 2 ** attempt))
 
 
-def replay_user(user, args, output):
+def replay_user(user, args, output, quota_stop):
     identity(user["uuid"])
     user_path = output / "users" / f"{user['uuid']}.json"
     result = json.loads(user_path.read_text(encoding="utf-8")) if user_path.exists() else {"uuid": user["uuid"], "user_name": user["uuid"], "sessions": []}
     sessions = user["sessions"][:args.max_sessions] if args.max_sessions else user["sessions"]
     previous = None
     for index, session in enumerate(sessions):
+        if quota_stop.is_set():
+            raise QuotaExhausted("evaluated")
         current = timestamp(session["start_time"])
         corpus_diagnostics = []
         if previous and current < previous:
@@ -172,7 +185,7 @@ def replay_user(user, args, output):
         dialogue = [{"role": turn["role"], "content": turn["content"], "timestamp": timestamp(turn["timestamp"])} for turn in session["dialogue"]]
         print(json.dumps({"event": "session.started", "user": user["uuid"], "session": index, "turns": len(dialogue)}), flush=True)
         def request(path, body=None):
-            return session_api(output, user["uuid"], session_id, path, body, getattr(args, "attempts", 3))
+            return session_api(output, user["uuid"], session_id, path, body, getattr(args, "attempts", 3), quota_stop)
         # Gold memories, persona_info, questions and answers never enter this payload.
         added = request("/add-dialogue", {**scope, "session_id": session_id, "timestamp": current, "dialogue": dialogue})
         extracted = request("/get-dialogue-memory?" + urlencode({**scope, "session_id": session_id}))
@@ -206,24 +219,33 @@ def replay(args):
     path = ROOT / dataset["file"]
     if dataset["revision"] != DATASET_REVISION or dataset["sha256"] != DATASET_HASHES[args.dataset] or file_hash(path) != dataset["sha256"]:
         raise ValueError("Dataset differs from pinned source")
-    health = api("/health")
-    if health["model"]["modelId"] != "gpt-6-luna":
-        raise ValueError("The evaluated model must be gpt-6-luna")
     output = CACHE / "results" / args.run_id
     metadata_path = output / "run.json"
-    selection = {"dataset": args.dataset, "limit_users": args.limit_users, "max_sessions": args.max_sessions, "max_questions": args.max_questions, "dataset_sha256": dataset["sha256"], "upstream_commit": UPSTREAM_COMMIT, "model": health["model"]}
-    if metadata_path.exists() and json.loads(metadata_path.read_text(encoding="utf-8"))["selection"] != selection:
-        raise ValueError("Run ID already uses different data, limits or model")
     prior = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+    try:
+        health = api("/health")
+    except QuotaExhausted:
+        if prior:
+            prior.update(status="quota_exhausted", quota_stage="evaluated")
+            save(metadata_path, prior)
+        raise
+    if health["model"]["modelId"] != "gpt-6-luna":
+        raise ValueError("The evaluated model must be gpt-6-luna")
+    selection = {"dataset": args.dataset, "limit_users": args.limit_users, "max_sessions": args.max_sessions, "max_questions": args.max_questions, "dataset_sha256": dataset["sha256"], "upstream_commit": UPSTREAM_COMMIT, "model": health["model"]}
+    if prior and prior["selection"] != selection:
+        raise ValueError("Run ID already uses different data, limits or model")
     metadata = {"selection": selection, "status": "replaying", "started_at": prior.get("started_at", datetime.now(timezone.utc).isoformat()), "judge_status": "not_configured", "users": 0, "sessions": 0, "questions": 0}
     metadata["execution"] = {"parallel_users": getattr(args, "workers", 1), "request_attempts": getattr(args, "attempts", 3), "request_journal": True, "session_order": "official_dataset_order"}
     save(metadata_path, metadata)
     failures = []
+    quota_stop = Event()
     with ThreadPoolExecutor(max_workers=getattr(args, "workers", 1)) as executor:
-        futures = {executor.submit(replay_user, user, args, output): user["uuid"] for user in selected_users(path, args.limit_users)}
+        futures = {executor.submit(replay_user, user, args, output, quota_stop): user["uuid"] for user in selected_users(path, args.limit_users)}
         for future in as_completed(futures):
             try:
                 result = future.result()
+            except QuotaExhausted:
+                continue
             except Exception as error:
                 failures.append({"user": futures[future], "error": str(error)})
                 metadata["failures"] = failures
@@ -234,6 +256,11 @@ def replay(args):
                 metadata["questions"] += sum(len(item.get("questions", [])) for item in result["sessions"])
                 print(json.dumps({"event": "user.completed", "user": result["uuid"], "sessions": len(result["sessions"])}), flush=True)
             save(metadata_path, metadata)
+    if quota_stop.is_set():
+        metadata["status"] = "quota_exhausted"
+        metadata["quota_stage"] = "evaluated"
+        save(metadata_path, metadata)
+        raise QuotaExhausted("evaluated")
     if failures:
         metadata["status"] = "replay_failed"
         save(metadata_path, metadata)
@@ -307,6 +334,26 @@ def validate_judgments(records):
     return invalid
 
 
+def quota_aware_judging(evaluator, quota_stop):
+    # The upstream evaluator keeps its prompts and worker functions. Only stop and cancel its pending work on quota errors.
+    class JudgePool(ProcessPoolExecutor):
+        def __exit__(self, exc_type, _exc_value, _traceback):
+            self.shutdown(wait=True, cancel_futures=exc_type is QuotaExhausted)
+
+    def completed_before_quota(futures):
+        pending = set(futures)
+        while pending:
+            if quota_stop.is_set():
+                raise QuotaExhausted("judge")
+            done, pending = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+            yield from done
+        if quota_stop.is_set():
+            raise QuotaExhausted("judge")
+
+    evaluator.ProcessPoolExecutor = JudgePool
+    evaluator.as_completed = completed_before_quota
+
+
 def score(args):
     identity(args.run_id)
     required = ["judge_LLM_API_BASE", "judge_LLM_API_KEY", "judge_LLM_MODELID"]
@@ -334,6 +381,7 @@ def score(args):
         spec = importlib.util.spec_from_file_location("halumem_official_evaluation", upstream / "evaluation.py")
         evaluator = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(evaluator)
+        quota_aware_judging(evaluator, proxy.quota_exhausted)
         try:
             for index, line in enumerate((output / "workbench_eval_results.jsonl").read_text(encoding="utf-8").splitlines(), 1):
                 user = json.loads(line)
@@ -346,12 +394,18 @@ def score(args):
                     save(judged, result)
                 for key in records:
                     records[key].extend(result[key])
+        except QuotaExhausted:
+            metadata["judge_status"] = "quota_exhausted"
+            metadata["quota_stage"] = "judge"
+            save(output / "run.json", metadata)
+            raise
         finally:
             save(output / "judge-transport.json", {"judge": judge_config, "current_attempt": proxy.stats, "recorded_at": datetime.now(timezone.utc).isoformat()})
     invalid = validate_judgments(records)
     result = {"status": "incomplete" if invalid else "scored", "invalid_judgments": invalid, "judge": judge_config, "agent_model": metadata["selection"]["model"], "selection": metadata["selection"], "metrics": aggregate(records), "records": records}
     save(output / "scores.json", result)
     metadata["judge_status"] = result["status"]
+    metadata.pop("quota_stage", None)
     save(output / "run.json", metadata)
     print(json.dumps({key: value for key, value in result.items() if key != "records"}), flush=True)
 
@@ -388,4 +442,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except QuotaExhausted as error:
+        print(json.dumps({"event": "quota_exhausted", "stage": error.stage}), flush=True)
+        sys.exit(42)

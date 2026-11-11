@@ -1,7 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WorkbenchError } from "@earendil-works/workbench-core";
 import { Parse } from "typebox/value";
-import { HaluMemAddSchema, HaluMemGetSchema, HaluMemRetrieveSchema, type HaluMemService } from "./halumem-service.ts";
+import {
+	HaluMemAddSchema,
+	HaluMemGetSchema,
+	HaluMemQuotaExhausted,
+	HaluMemRetrieveSchema,
+	type HaluMemService,
+} from "./halumem-service.ts";
 
 /** Optional, separately launched evaluation host. The normal Workbench server does not expose these routes. */
 export class HaluMemServer {
@@ -55,9 +61,10 @@ export class HaluMemServer {
 				throw new WorkbenchError("path_denied", "Invalid evaluation token");
 			const url = new URL(request.url ?? "/", "http://localhost");
 			let value: unknown;
-			if (request.method === "GET" && url.pathname === "/health")
+			if (request.method === "GET" && url.pathname === "/health") {
+				this.service.assertModelQuota();
 				value = { status: "ok", model: this.service.model, protocol: "halumem-v1" };
-			else if (request.method === "GET" && url.pathname === "/get-dialogue-memory")
+			} else if (request.method === "GET" && url.pathname === "/get-dialogue-memory")
 				value = await this.service.getDialogueMemory(Parse(HaluMemGetSchema, Object.fromEntries(url.searchParams)));
 			else if (request.method === "POST" && url.pathname === "/add-dialogue")
 				value = await this.service.addDialogue(
@@ -72,6 +79,10 @@ export class HaluMemServer {
 			else throw new WorkbenchError("not_found", "Unknown HaluMem API");
 			this.send(response, 200, value);
 		} catch (error) {
+			if (error instanceof HaluMemQuotaExhausted) {
+				this.send(response, 402, { error: { code: "quota_exhausted", message: error.message } });
+				return;
+			}
 			const code = error instanceof WorkbenchError ? error.code : "invalid_input";
 			const status =
 				code === "path_denied"

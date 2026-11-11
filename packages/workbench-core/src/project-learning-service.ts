@@ -167,7 +167,7 @@ export class ProjectLearningService {
 			pendingOnly,
 		);
 	}
-	async retry(id: string): Promise<LearningReview> {
+	async retry(id: string, signal?: AbortSignal): Promise<LearningReview> {
 		const review = await this.get(id);
 		if (["queued", "running"].includes(review.status)) return review;
 		const key =
@@ -183,6 +183,7 @@ export class ProjectLearningService {
 			snapshot.unverified,
 			true,
 			{ origin: review.origin ?? "manual", snapshotKey: key, runIds: review.sourceRunIds },
+			signal,
 		);
 	}
 	async detail(id: string) {
@@ -507,7 +508,7 @@ export class ProjectLearningService {
 		});
 		return review;
 	}
-	async reviewSession(sessionId: string): Promise<LearningReview> {
+	async reviewSession(sessionId: string, signal?: AbortSignal): Promise<LearningReview> {
 		const session = await this.options.sessions.get(sessionId);
 		if (!session.projectId || session.status !== "idle")
 			throw new WorkbenchError("conflict", "请选择已完成的项目会话进行复盘");
@@ -555,6 +556,7 @@ export class ProjectLearningService {
 			unverified || Boolean(run && run.status !== "completed"),
 			true,
 			{ origin: "manual", runIds: window.map((value) => value.id) },
+			signal,
 		);
 		if (!unverified && run?.status === "completed")
 			await this.options.repository.consumeCadence(
@@ -609,7 +611,9 @@ export class ProjectLearningService {
 		unverified = false,
 		manual = false,
 		metadata?: { origin: "periodic" | "prompt" | "manual" | "agent"; snapshotKey?: string; runIds?: string[] },
+		parentSignal?: AbortSignal,
 	): Promise<LearningReview> {
+		parentSignal?.throwIfAborted();
 		if (this.closing) throw new WorkbenchError("conflict", "工作台正在关闭");
 		if (this.enqueuing.has(sourceKey)) throw new WorkbenchError("conflict", "该任务已经进入复盘");
 		this.enqueuing.add(sourceKey);
@@ -652,7 +656,13 @@ export class ProjectLearningService {
 			});
 			const handle = this.options.coordinator.submit(
 				`project-review:${review.id}`,
-				(signal) => this.generate(review.id, snapshot.sources, snapshot.unverified, signal),
+				(signal) =>
+					this.generate(
+						review.id,
+						snapshot.sources,
+						snapshot.unverified,
+						parentSignal ? AbortSignal.any([signal, parentSignal]) : signal,
+					),
 				{ queueIfBusy: true, resourceKey: "project-reviews" },
 			);
 			this.active.set(review.id, handle);
@@ -966,6 +976,7 @@ export class ProjectLearningService {
 				diagnostics,
 				signal,
 			);
+			signal.throwIfAborted();
 			review = await this.save({
 				...review,
 				status: changes.length || diagnostics.length ? "ready" : "empty",
