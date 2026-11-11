@@ -42,7 +42,9 @@ python scripts/halumem.py run --dataset medium --run-id smoke-medium --limit-use
 python scripts/halumem.py score --run-id smoke-medium --workers 1
 ```
 
-相同命令与 run ID 可在中断后重试。已完成会话和提取收据复用，未完成会话会重新检索或生成尚未保存的问答，可能产生额外调用。更改数据、采样参数或模型时使用新 run ID。`max-questions` 是**每会话**上限，`0` 取消上限。新增的实验从空记忆开始，每个数据集用户均有独立的完整 WorkbenchApplication、SQLite、USER.md 和项目，避免跨用户污染。
+相同命令与 run ID 可在中断后重试。每次成功的 API 请求立即保存，已完成会话、提取收据和问答可复用；请求缓存按用户和会话隔离，避免把更新前的结果用于后续会话。`--attempts` 默认 3，仅重试暂时性网络、限流和模型请求失败；用完后保留进度并报告未完成用户。更改数据、采样参数或模型时使用新 run ID。`max-questions` 是**每会话**上限，`0` 取消上限。新增的实验从空记忆开始，每个数据集用户均有独立的完整 WorkbenchApplication、SQLite、USER.md 和项目，避免跨用户污染。
+
+全量可在确认用量后使用 `--workers 4 --limit-users 20 --max-sessions 0 --max-questions 0` 并行处理四个独立用户。每个用户内仍严格按时间顺序执行，某个用户失败不会取消其他用户的已完成结果。并行数和重试数记录在 `run.json` 的 execution 字段。
 
 全量需要另行确认用量，再运行 `--limit-users 20 --max-sessions 0 --max-questions 0`。Medium 与 Long 各有 20 个用户，均包含约 1.5 万记忆点、3,467 道题。judge 调用按需要评判的金标准记忆点、提取结果、更新记录和问答计算；还需计入提取、相似性判断、问答、嵌入和失败重试。冒烟分数不能代表全量表现。
 
@@ -84,6 +86,7 @@ state/<run>/users/<user>/application/ # 每用户独立工作台数据库与记�
 state/<run>/users/<user>/sessions/    # 每会话提取收据与快照
 results/<run>/run.json                # 范围、模型、完成状态与产物哈希
 results/<run>/users/                  # 逐用户重放结果
+results/<run>/requests/               # 按用户、会话和请求内容隔离的成功响应
 results/<run>/workbench_eval_results.jsonl
 results/<run>/judged/<config-hash>/   # 按产物、judge 模型与服务地址隔离缓存
 results/<run>/judge-responses/        # 逐提示缓存，减少中断后的重复调用

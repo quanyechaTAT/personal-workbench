@@ -2,6 +2,7 @@
 """Pinned HaluMem data, native Workbench replay, and official judge integration."""
 import argparse
 import ast
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import importlib.util
 import json
@@ -10,9 +11,10 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from halumem_judge import JudgeProxy
@@ -132,6 +134,66 @@ def api(path, body=None):
         raise RuntimeError(f"HaluMem API {error.code}: {detail}") from None
 
 
+def session_api(output, user_id, session_id, path, body, attempts):
+    key = hashlib.sha256(json.dumps({"path": path, "body": body}, sort_keys=True).encode()).hexdigest()
+    cached = output / "requests" / user_id / session_id / (key + ".json")
+    if cached.exists():
+        return json.loads(cached.read_text(encoding="utf-8"))
+    for attempt in range(1, attempts + 1):
+        try:
+            value = api(path, body)
+            save(cached, value)
+            return value
+        except (RuntimeError, URLError, TimeoutError, ConnectionError) as error:
+            transient = not isinstance(error, RuntimeError) or re.match(r"HaluMem API (429|502|503|504):", str(error))
+            print(json.dumps({"event": "request.failed", "user": user_id, "session": session_id, "path": path.split("?")[0], "attempt": attempt, "retrying": bool(transient and attempt < attempts), "error": str(error)}), flush=True)
+            if not transient or attempt == attempts:
+                raise
+            time.sleep(min(30, 2 ** attempt))
+
+
+def replay_user(user, args, output):
+    identity(user["uuid"])
+    user_path = output / "users" / f"{user['uuid']}.json"
+    result = json.loads(user_path.read_text(encoding="utf-8")) if user_path.exists() else {"uuid": user["uuid"], "user_name": user["uuid"], "sessions": []}
+    sessions = user["sessions"][:args.max_sessions] if args.max_sessions else user["sessions"]
+    previous = None
+    for index, session in enumerate(sessions):
+        current = timestamp(session["start_time"])
+        if previous and current < previous:
+            raise ValueError("Corpus sessions are not chronological")
+        previous = current
+        if index < len(result["sessions"]):
+            continue
+        scope = {"run_id": args.run_id, "user_id": user["uuid"]}
+        session_id = f"session-{index}"
+        dialogue = [{"role": turn["role"], "content": turn["content"], "timestamp": timestamp(turn["timestamp"])} for turn in session["dialogue"]]
+        print(json.dumps({"event": "session.started", "user": user["uuid"], "session": index, "turns": len(dialogue)}), flush=True)
+        def request(path, body=None):
+            return session_api(output, user["uuid"], session_id, path, body, getattr(args, "attempts", 3))
+        # Gold memories, persona_info, questions and answers never enter this payload.
+        added = request("/add-dialogue", {**scope, "session_id": session_id, "timestamp": current, "dialogue": dialogue})
+        extracted = request("/get-dialogue-memory?" + urlencode({**scope, "session_id": session_id}))
+        item = {"dialogue": session["dialogue"], "memory_points": json.loads(json.dumps(session.get("memory_points", []))), "extracted_memories": [memory["memory"] for memory in extracted["memories"]], "add_dialogue_duration_ms": added["duration_ms"], "extraction_usage": added.get("extraction_usage"), "adapter_diagnostics": added["diagnostics"], "questions": []}
+        if session.get("is_generated_qa_session", False):
+            item["is_generated_qa_session"] = True
+        for memory in item["memory_points"]:
+            if str(memory.get("is_update")).lower() == "true" and memory.get("original_memories"):
+                found = request("/retrieve-memory", {**scope, "query": memory["memory_content"], "top_k": 10})
+                memory["memories_from_system"] = [f"{row['timestamp']}: {row['memory']}" for row in found["memories"]]
+                memory["retrieval_diagnostics"] = found.get("retrieval_diagnostics", [])
+        questions = session.get("questions", [])
+        if args.max_questions:
+            questions = questions[:args.max_questions]
+        for question in questions:
+            found = request("/retrieve-memory", {**scope, "query": question["question"], "top_k": 20, "generate_answer": True})
+            item["questions"].append({**question, "context": found["context"], "system_response": found["system_response"], "search_duration_ms": found["search_duration_ms"], "response_duration_ms": found["response_duration_ms"], "qa_usage": found.get("qa_usage"), "retrieval_diagnostics": found.get("retrieval_diagnostics", [])})
+        result["sessions"].append(item)
+        save(user_path, result)
+        print(json.dumps({"event": "session.completed", "user": user["uuid"], "session": index, "memories": len(item["extracted_memories"]), "questions": len(item["questions"]), "diagnostics": len(item["adapter_diagnostics"])}), flush=True)
+    return result
+
+
 def replay(args):
     identity(args.run_id)
     source_path = CACHE / "sources.json"
@@ -150,55 +212,33 @@ def replay(args):
         raise ValueError("Run ID already uses different data, limits or model")
     prior = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     metadata = {"selection": selection, "status": "replaying", "started_at": prior.get("started_at", datetime.now(timezone.utc).isoformat()), "judge_status": "not_configured", "users": 0, "sessions": 0, "questions": 0}
+    metadata["execution"] = {"parallel_users": getattr(args, "workers", 1), "request_attempts": getattr(args, "attempts", 3), "request_journal": True}
     save(metadata_path, metadata)
-    for user in selected_users(path, args.limit_users):
-        identity(user["uuid"])
-        user_path = output / "users" / f"{user['uuid']}.json"
-        if user_path.exists():
-            result = json.loads(user_path.read_text(encoding="utf-8"))
-        else:
-            result = {"uuid": user["uuid"], "user_name": user["uuid"], "sessions": []}
-        sessions = user["sessions"][:args.max_sessions] if args.max_sessions else user["sessions"]
-        previous = None
-        for index, session in enumerate(sessions):
-            current = timestamp(session["start_time"])
-            if previous and current < previous:
-                raise ValueError("Corpus sessions are not chronological")
-            previous = current
-            if index < len(result["sessions"]):
-                continue
-            scope = {"run_id": args.run_id, "user_id": user["uuid"]}
-            session_id = f"session-{index}"
-            dialogue = [{"role": turn["role"], "content": turn["content"], "timestamp": timestamp(turn["timestamp"])} for turn in session["dialogue"]]
-            print(json.dumps({"event": "session.started", "user": user["uuid"], "session": index, "turns": len(dialogue)}), flush=True)
-            # Gold memories, persona_info, questions and answers never enter the add-dialogue payload.
-            added = api("/add-dialogue", {**scope, "session_id": session_id, "timestamp": current, "dialogue": dialogue})
-            extracted = api("/get-dialogue-memory?" + urlencode({**scope, "session_id": session_id}))
-            item = {"dialogue": session["dialogue"], "memory_points": json.loads(json.dumps(session.get("memory_points", []))), "extracted_memories": [memory["memory"] for memory in extracted["memories"]], "add_dialogue_duration_ms": added["duration_ms"], "extraction_usage": added.get("extraction_usage"), "adapter_diagnostics": added["diagnostics"], "questions": []}
-            if session.get("is_generated_qa_session", False):
-                item["is_generated_qa_session"] = True
-            for memory in item["memory_points"]:
-                if str(memory.get("is_update")).lower() == "true" and memory.get("original_memories"):
-                    found = api("/retrieve-memory", {**scope, "query": memory["memory_content"], "top_k": 10})
-                    memory["memories_from_system"] = [f"{row['timestamp']}: {row['memory']}" for row in found["memories"]]
-                    memory["retrieval_diagnostics"] = found.get("retrieval_diagnostics", [])
-            questions = session.get("questions", [])
-            if args.max_questions:
-                questions = questions[:args.max_questions]
-            for question in questions:
-                found = api("/retrieve-memory", {**scope, "query": question["question"], "top_k": 20, "generate_answer": True})
-                item["questions"].append({**question, "context": found["context"], "system_response": found["system_response"], "search_duration_ms": found["search_duration_ms"], "response_duration_ms": found["response_duration_ms"], "qa_usage": found.get("qa_usage"), "retrieval_diagnostics": found.get("retrieval_diagnostics", [])})
-            result["sessions"].append(item)
-            save(user_path, result)
-            print(json.dumps({"event": "session.completed", "session": index, "memories": len(item["extracted_memories"]), "questions": len(item["questions"]), "diagnostics": len(item["adapter_diagnostics"])}), flush=True)
-        metadata["users"] += 1
-        metadata["sessions"] += len(result["sessions"])
-        metadata["questions"] += sum(len(item.get("questions", [])) for item in result["sessions"])
+    failures = []
+    with ThreadPoolExecutor(max_workers=getattr(args, "workers", 1)) as executor:
+        futures = {executor.submit(replay_user, user, args, output): user["uuid"] for user in selected_users(path, args.limit_users)}
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+            except Exception as error:
+                failures.append({"user": futures[future], "error": str(error)})
+                metadata["failures"] = failures
+                print(json.dumps({"event": "user.failed", **failures[-1]}), flush=True)
+            else:
+                metadata["users"] += 1
+                metadata["sessions"] += len(result["sessions"])
+                metadata["questions"] += sum(len(item.get("questions", [])) for item in result["sessions"])
+                print(json.dumps({"event": "user.completed", "user": result["uuid"], "sessions": len(result["sessions"])}), flush=True)
+            save(metadata_path, metadata)
+    if failures:
+        metadata["status"] = "replay_failed"
+        save(metadata_path, metadata)
+        raise RuntimeError(f"{len(failures)} corpus users remain incomplete; retry the same command to resume")
     artifacts = output / "workbench_eval_results.jsonl"
     artifacts.write_text("".join(json.dumps(json.loads(item.read_text(encoding="utf-8")), ensure_ascii=False) + "\n" for item in sorted((output / "users").glob("*.json"))), encoding="utf-8")
     metadata["status"] = "artifacts_ready"
     metadata["artifact_sha256"] = hashlib.sha256(artifacts.read_bytes()).hexdigest()
-    metadata["judge_status"] = "awaiting_configuration"
+    metadata["judge_status"] = prior.get("judge_status", "awaiting_configuration") if prior.get("artifact_sha256") == metadata["artifact_sha256"] else "awaiting_configuration"
     save(metadata_path, metadata)
     print(json.dumps(metadata), flush=True)
 
@@ -324,6 +364,8 @@ def main():
     run.add_argument("--limit-users", type=int, default=1)
     run.add_argument("--max-sessions", type=int, default=3)
     run.add_argument("--max-questions", type=int, default=3)
+    run.add_argument("--workers", type=int, default=1, help="Independent users in parallel; each user's sessions remain chronological")
+    run.add_argument("--attempts", type=int, default=3, help="Maximum attempts per transiently failed API operation")
     scoring = commands.add_parser("score")
     scoring.add_argument("--run-id", required=True)
     scoring.add_argument("--workers", type=int, default=1)
@@ -332,7 +374,7 @@ def main():
     if args.command == "fetch":
         fetch_data(args)
     elif args.command == "run":
-        if args.limit_users < 1 or args.max_sessions < 0 or args.max_questions < 0:
+        if args.limit_users < 1 or args.max_sessions < 0 or args.max_questions < 0 or args.workers < 1 or args.attempts < 1:
             parser.error("User count must be positive and limits must be non-negative; zero removes a session/question limit")
         replay(args)
     else:

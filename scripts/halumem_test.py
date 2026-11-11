@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -20,6 +21,46 @@ def empty_records():
 
 
 class HaluMemTests(unittest.TestCase):
+    def test_parallel_users_keep_each_users_session_order(self):
+        barrier = threading.Barrier(2)
+        observed = {"alice": [], "bob": []}
+        def api(path, body=None):
+            if path == "/health":
+                return {"model": {"provider": "openai-codex", "modelId": "gpt-6-luna"}}
+            if path == "/add-dialogue":
+                observed[body["user_id"]].append(body["session_id"])
+                if body["session_id"] == "session-0":
+                    barrier.wait(timeout=5)
+                return {"duration_ms": 1, "diagnostics": []}
+            if path.startswith("/get-dialogue-memory?"):
+                return {"memories": []}
+            self.fail(path)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = {"start_time": "Jan 01, 2025, 00:00:00", "dialogue": [{"role": "user", "content": "user", "timestamp": "Jan 01, 2025, 00:00:00"}, {"role": "assistant", "content": "assistant", "timestamp": "Jan 01, 2025, 00:00:01"}]}
+            second = {**session, "start_time": "Jan 02, 2025, 00:00:00"}
+            dataset = root / "corpus.jsonl"
+            dataset.write_text("".join(json.dumps({"uuid": name, "sessions": [session, second]}) + "\n" for name in observed), encoding="utf-8")
+            digest = halumem.file_hash(dataset)
+            halumem.save(root / "sources.json", {"datasets": {"medium": {"file": "corpus.jsonl", "sha256": digest, "revision": halumem.DATASET_REVISION}}})
+            args = argparse.Namespace(run_id="parallel", dataset="medium", limit_users=2, max_sessions=0, max_questions=0, workers=2, attempts=1)
+            with patch.object(halumem, "ROOT", root), patch.object(halumem, "CACHE", root), patch.object(halumem, "DATASET_HASHES", {"medium": digest}), patch.object(halumem, "api", side_effect=api), contextlib.redirect_stdout(io.StringIO()):
+                halumem.replay(args)
+            self.assertEqual(observed, {name: ["session-0", "session-1"] for name in observed})
+            metadata = json.loads((root / "results/parallel/run.json").read_text())
+            self.assertEqual(metadata["sessions"], 4)
+            self.assertEqual(metadata["status"], "artifacts_ready")
+
+    def test_request_journal_survives_failure_without_reusing_another_sessions_context(self):
+        body = {"query": "home city", "top_k": 20, "generate_answer": True}
+        with tempfile.TemporaryDirectory() as directory, patch.object(halumem, "api", side_effect=[RuntimeError("HaluMem API 502: temporary model failure"), {"system_response": "Paris"}, {"system_response": "Berlin"}]) as api, patch.object(halumem.time, "sleep"), contextlib.redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            first = halumem.session_api(root, "alice", "session-0", "/retrieve-memory", body, 3)
+            self.assertEqual(first["system_response"], "Paris")
+            self.assertEqual(halumem.session_api(root, "alice", "session-0", "/retrieve-memory", body, 3), first)
+            self.assertEqual(halumem.session_api(root, "alice", "session-1", "/retrieve-memory", body, 3)["system_response"], "Berlin")
+            self.assertEqual(api.call_count, 3)
+
     def test_judge_fence_adaptation_preserves_the_entire_json_value(self):
         content = '{"score":"2","reasoning":"来源充分\\n中文"}'
         value = {"choices": [{"message": {"content": content}}]}
