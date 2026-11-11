@@ -25,7 +25,7 @@ class HaluMemTests(unittest.TestCase):
         def http_error(code, body):
             return HTTPError("https://judge.example/v1/chat/completions", code, "provider error", {}, io.BytesIO(body))
 
-        for quota in [http_error(402, b""), http_error(429, b'{"error":{"code":"insufficient_quota"}}')]:
+        for quota in [http_error(402, b""), http_error(429, b'{"error":{"code":"insufficient_quota"}}'), http_error(429, b'{"error":{"message":"The usage limit has been reached"}}')]:
             with self.subTest(status=quota.code), tempfile.TemporaryDirectory() as directory:
                 rate_limit = http_error(429, b'{"error":{"code":"rate_limit_exceeded"}}')
                 with patch("halumem_judge.urlopen", side_effect=[rate_limit, quota]) as upstream:

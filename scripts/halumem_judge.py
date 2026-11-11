@@ -20,7 +20,7 @@ class QuotaExhausted(RuntimeError):
 QUOTA_ERROR = re.compile(
     r"insufficient[ _-](?:quota|balance|credits)|usage_limit_reached|usage_not_included|"
     r"billing_hard_limit_reached|exceeded your current quota|quota (?:exceeded|exhausted)|"
-    r"usage limit reached|out of budget|credit balance is too low|余额不足|额度(?:不足|已用尽)",
+    r"usage limit (?:has been )?reached|out of budget|credit balance is too low|余额不足|额度(?:不足|已用尽)",
     re.IGNORECASE,
 )
 

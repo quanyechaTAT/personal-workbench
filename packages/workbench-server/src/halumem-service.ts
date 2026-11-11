@@ -109,7 +109,7 @@ export class HaluMemService {
 			for await (const event of send(sessionId, input, { ...options, signal })) {
 				if (
 					event.type === "run.failed" &&
-					/(?:\bHTTP\s*402\b|payment required|insufficient[_ -](?:quota|balance|credits)|usage_limit_reached|usage_not_included|hit your ChatGPT usage limit|usage limit reached|quota (?:exceeded|exhausted)|exceeded your current quota|out of budget|billing_hard_limit_reached|余额不足|额度(?:不足|已用尽))/iu.test(
+					/(?:\bHTTP\s*402\b|payment required|insufficient[_ -](?:quota|balance|credits)|usage_limit_reached|usage_not_included|hit your ChatGPT usage limit|usage limit (?:has been )?reached|quota (?:exceeded|exhausted)|exceeded your current quota|out of budget|billing_hard_limit_reached|余额不足|额度(?:不足|已用尽))/iu.test(
 						event.data.message,
 					)
 				) {

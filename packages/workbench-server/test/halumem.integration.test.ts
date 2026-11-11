@@ -177,7 +177,10 @@ test("replays native roles, freezes extraction snapshots, updates memories and i
 				targetId: second.memories[0].id,
 				expectedVersion: second.memories[0].version,
 			}),
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" }),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "Codex error: The usage limit has been reached",
+			}),
 			fauxAssistantMessage("Should never be requested"),
 		]);
 		await expect(service.addDialogue(quotaInput)).rejects.toThrow("evaluated model quota exhausted");
