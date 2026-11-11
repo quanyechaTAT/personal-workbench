@@ -21,7 +21,7 @@ def empty_records():
 
 
 class HaluMemTests(unittest.TestCase):
-    def test_parallel_users_keep_each_users_session_order(self):
+    def test_parallel_users_keep_official_session_order_even_when_source_timestamps_regress(self):
         barrier = threading.Barrier(2)
         observed = {"alice": [], "bob": []}
         def api(path, body=None):
@@ -38,7 +38,7 @@ class HaluMemTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             session = {"start_time": "Jan 01, 2025, 00:00:00", "dialogue": [{"role": "user", "content": "user", "timestamp": "Jan 01, 2025, 00:00:00"}, {"role": "assistant", "content": "assistant", "timestamp": "Jan 01, 2025, 00:00:01"}]}
-            second = {**session, "start_time": "Jan 02, 2025, 00:00:00"}
+            second = {**session, "start_time": "Dec 31, 2024, 00:00:00"}
             dataset = root / "corpus.jsonl"
             dataset.write_text("".join(json.dumps({"uuid": name, "sessions": [session, second]}) + "\n" for name in observed), encoding="utf-8")
             digest = halumem.file_hash(dataset)
@@ -50,6 +50,8 @@ class HaluMemTests(unittest.TestCase):
             metadata = json.loads((root / "results/parallel/run.json").read_text())
             self.assertEqual(metadata["sessions"], 4)
             self.assertEqual(metadata["status"], "artifacts_ready")
+            artifact = json.loads((root / "results/parallel/users/alice.json").read_text())
+            self.assertEqual(artifact["sessions"][1]["corpus_diagnostics"][0]["kind"], "timestamp_regression")
 
     def test_request_journal_survives_failure_without_reusing_another_sessions_context(self):
         body = {"query": "home city", "top_k": 20, "generate_answer": True}

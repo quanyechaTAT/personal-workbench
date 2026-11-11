@@ -240,7 +240,7 @@ npm run test:e2e --workspace=@earendil-works/workbench-ui
 
 ### HaluMem 记忆评测
 
-[评测说明](benchmarks/halumem/README.md) 提供官方 Medium / Long 数据下载、独立评测服务的三个接口、按时间顺序重放、断点续跑和官方 judge 接入。被测记忆复盘与问答模型固定为 `gpt-6-luna`；judge 使用 `.env` 中单独的 `judge_LLM_API_BASE`、`judge_LLM_API_KEY`、`judge_LLM_MODELID`。评测数据、工作区和结果保存在被 Git 忽略的 `.cache/halumem/`，各数据集用户使用独立数据库与记忆文件。
+[评测说明](benchmarks/halumem/README.md) 提供官方 Medium / Long 数据下载、独立评测服务的三个接口、按官方会话顺序重放、断点续跑和官方 judge 接入。被测记忆复盘与问答模型固定为 `gpt-6-luna`；judge 使用 `.env` 中单独的 `judge_LLM_API_BASE`、`judge_LLM_API_KEY`、`judge_LLM_MODELID`。评测数据、工作区和结果保存在被 Git 忽略的 `.cache/halumem/`，各数据集用户使用独立数据库与记忆文件。
 
 ## 上游资料
 

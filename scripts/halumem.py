@@ -160,8 +160,10 @@ def replay_user(user, args, output):
     previous = None
     for index, session in enumerate(sessions):
         current = timestamp(session["start_time"])
+        corpus_diagnostics = []
         if previous and current < previous:
-            raise ValueError("Corpus sessions are not chronological")
+            corpus_diagnostics.append({"kind": "timestamp_regression", "previous": previous, "current": current})
+            print(json.dumps({"event": "corpus.timestamp_regression", "user": user["uuid"], "session": index, "previous": previous, "current": current}), flush=True)
         previous = current
         if index < len(result["sessions"]):
             continue
@@ -175,6 +177,8 @@ def replay_user(user, args, output):
         added = request("/add-dialogue", {**scope, "session_id": session_id, "timestamp": current, "dialogue": dialogue})
         extracted = request("/get-dialogue-memory?" + urlencode({**scope, "session_id": session_id}))
         item = {"dialogue": session["dialogue"], "memory_points": json.loads(json.dumps(session.get("memory_points", []))), "extracted_memories": [memory["memory"] for memory in extracted["memories"]], "add_dialogue_duration_ms": added["duration_ms"], "extraction_usage": added.get("extraction_usage"), "adapter_diagnostics": added["diagnostics"], "questions": []}
+        if corpus_diagnostics:
+            item["corpus_diagnostics"] = corpus_diagnostics
         if session.get("is_generated_qa_session", False):
             item["is_generated_qa_session"] = True
         for memory in item["memory_points"]:
@@ -212,7 +216,7 @@ def replay(args):
         raise ValueError("Run ID already uses different data, limits or model")
     prior = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     metadata = {"selection": selection, "status": "replaying", "started_at": prior.get("started_at", datetime.now(timezone.utc).isoformat()), "judge_status": "not_configured", "users": 0, "sessions": 0, "questions": 0}
-    metadata["execution"] = {"parallel_users": getattr(args, "workers", 1), "request_attempts": getattr(args, "attempts", 3), "request_journal": True}
+    metadata["execution"] = {"parallel_users": getattr(args, "workers", 1), "request_attempts": getattr(args, "attempts", 3), "request_journal": True, "session_order": "official_dataset_order"}
     save(metadata_path, metadata)
     failures = []
     with ThreadPoolExecutor(max_workers=getattr(args, "workers", 1)) as executor:
