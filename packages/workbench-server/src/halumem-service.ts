@@ -56,6 +56,7 @@ interface Receipt {
 	workbench_session_id: string;
 	workbench_run_id: string;
 	review_id?: string;
+	review_outcome?: "ready" | "empty" | "rejected";
 	status: "processing" | "ready";
 	memories: MemoryPoint[];
 	diagnostics: unknown[];
@@ -246,34 +247,53 @@ export class HaluMemService {
 					settledAt: transcript.at(-1)!.timestamp,
 				});
 			}
+			let nativePrecondition: string | undefined;
 			let review = receipt.review_id
 				? await application.services.learning.get(receipt.review_id)
-				: await application.services.learning.reviewSession(session.id, this.modelQuota.signal);
-			if (["failed", "interrupted", "cancelled"].includes(review.status))
-				review = await application.services.learning.retry(review.id, this.modelQuota.signal);
-			receipt.review_id = review.id;
-			await writeTextAtomically(path, JSON.stringify(receipt));
-			while (
-				["queued", "running"].includes(review.status) ||
-				review.changes.some(
-					(change) => change.status === "applying" || (change.status === "pending" && !change.autoBlockedReason),
-				)
-			) {
-				if (review.changes.some((change) => change.error && ["pending", "applying"].includes(change.status)))
+				: await application.services.learning
+						.reviewSession(session.id, this.modelQuota.signal)
+						.catch((error: unknown) => {
+							if (
+								!(
+									error instanceof WorkbenchError &&
+									error.code === "conflict" &&
+									error.message === "会话尚无完整回复"
+								)
+							)
+								throw error;
+							// The native evidence budget can remove every assistant source from an intact imported dialogue.
+							nativePrecondition = error.message;
+							return undefined;
+						});
+			if (review) {
+				if (["failed", "interrupted", "cancelled"].includes(review.status))
+					review = await application.services.learning.retry(review.id, this.modelQuota.signal);
+				receipt.review_id = review.id;
+				await writeTextAtomically(path, JSON.stringify(receipt));
+				while (
+					["queued", "running"].includes(review.status) ||
+					review.changes.some(
+						(change) =>
+							change.status === "applying" || (change.status === "pending" && !change.autoBlockedReason),
+					)
+				) {
+					if (review.changes.some((change) => change.error && ["pending", "applying"].includes(change.status)))
+						throw new WorkbenchError(
+							"external_failure",
+							"Memory application did not complete; inspect the isolated review and retry",
+						);
+					await delay(100, undefined, { signal });
+					review = await application.services.learning.get(review.id);
+				}
+				if (!["ready", "empty"].includes(review.status))
 					throw new WorkbenchError(
 						"external_failure",
-						"Memory application did not complete; inspect the isolated review and retry",
+						`Memory extraction did not complete: ${review.error ?? review.status}`,
 					);
-				await delay(100, undefined, { signal });
-				review = await application.services.learning.get(review.id);
 			}
-			if (!["ready", "empty"].includes(review.status))
-				throw new WorkbenchError(
-					"external_failure",
-					`Memory extraction did not complete: ${review.error ?? review.status}`,
-				);
+			receipt.review_outcome = review ? (review.status === "ready" ? "ready" : "empty") : "rejected";
 			const ids = new Set(
-				review.changes
+				(review?.changes ?? [])
 					.filter((change) => change.status === "applied" && change.kind === "memory")
 					.flatMap((change) => change.semanticIds ?? []),
 			);
@@ -286,12 +306,13 @@ export class HaluMemService {
 					version: memory.version,
 				}));
 			receipt.diagnostics = [
-				...(review.diagnostics ?? []),
-				...review.changes
+				...(nativePrecondition ? [{ kind: "native_precondition", message: nativePrecondition }] : []),
+				...(review?.diagnostics ?? []),
+				...(review?.changes ?? [])
 					.filter((change) => change.autoBlockedReason)
 					.map((change) => ({ kind: change.kind, message: change.autoBlockedReason })),
 			];
-			receipt.extraction_usage = review.usage;
+			receipt.extraction_usage = review?.usage;
 			let times: Record<string, string> = {};
 			try {
 				times = JSON.parse(await readFile(join(directory, "memory-times.json"), "utf8")) as Record<string, string>;

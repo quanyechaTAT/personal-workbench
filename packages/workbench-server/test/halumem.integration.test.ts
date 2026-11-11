@@ -162,6 +162,27 @@ test("replays native roles, freezes extraction snapshots, updates memories and i
 		fixture.faux.setResponses([extraction("I live in Oslo.")]);
 		expect((await service.addDialogue(retryInput)).memories.map((item) => item.memory)).toEqual(["I live in Oslo."]);
 		expect(fixture.faux.getPendingResponseCount()).toBe(0);
+		fixture.faux.setResponses([fauxAssistantMessage("Should never be requested")]);
+		const budgetInput = {
+			...dialogue,
+			user_id: "long-input",
+			dialogue: Array.from({ length: 4 }, () => [
+				{
+					role: "user" as const,
+					content: "A detailed project note for future planning. ".repeat(40).slice(0, 1500),
+				},
+				{ role: "assistant" as const, content: "Noted." },
+			]).flat(),
+		};
+		const rejected = await service.addDialogue(budgetInput);
+		expect(rejected).toMatchObject({
+			status: "ready",
+			review_outcome: "rejected",
+			memories: [],
+			diagnostics: [{ kind: "native_precondition", message: "会话尚无完整回复" }],
+		});
+		expect(await service.addDialogue(budgetInput)).toEqual(rejected);
+		expect(fixture.faux.getPendingResponseCount()).toBe(1);
 		await expect(service.getDialogueMemory({ ...scope, session_id: "../escape" })).rejects.toThrow("Invalid session");
 		const quotaInput = {
 			...dialogue,
