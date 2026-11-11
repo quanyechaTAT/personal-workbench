@@ -169,6 +169,10 @@ class HaluMemTests(unittest.TestCase):
                 halumem.replay(args)
                 first = list(calls)
                 calls.clear()
+                metadata_path = root / "results/smoke/run.json"
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                metadata["failures"] = [{"error": "复盘输出结构无效，需要重试"}]
+                halumem.save(metadata_path, metadata)
                 halumem.replay(args)
             self.assertEqual([call[0] for call in calls], ["/health"])
             qa_body = next(body for path, body in first if path == "/retrieve-memory" and body.get("generate_answer"))

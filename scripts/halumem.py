@@ -74,7 +74,7 @@ def fetch_data(args):
     revision = DATASET_REVISION
     tree = read_json_url(f"https://huggingface.co/api/datasets/{DATASET}/tree/{revision}")
     manifest_path = CACHE / "sources.json"
-    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"datasets": {}}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {"datasets": {}}
     manifest.update(upstream_commit=UPSTREAM_COMMIT, dataset=DATASET)
     variants = ["medium", "long"] if args.dataset == "both" else [args.dataset]
     for variant in variants:
@@ -201,7 +201,7 @@ def replay_user(user, args, output):
 def replay(args):
     identity(args.run_id)
     source_path = CACHE / "sources.json"
-    sources = json.loads(source_path.read_text())
+    sources = json.loads(source_path.read_text(encoding="utf-8"))
     dataset = sources["datasets"][args.dataset]
     path = ROOT / dataset["file"]
     if dataset["revision"] != DATASET_REVISION or dataset["sha256"] != DATASET_HASHES[args.dataset] or file_hash(path) != dataset["sha256"]:
@@ -212,9 +212,9 @@ def replay(args):
     output = CACHE / "results" / args.run_id
     metadata_path = output / "run.json"
     selection = {"dataset": args.dataset, "limit_users": args.limit_users, "max_sessions": args.max_sessions, "max_questions": args.max_questions, "dataset_sha256": dataset["sha256"], "upstream_commit": UPSTREAM_COMMIT, "model": health["model"]}
-    if metadata_path.exists() and json.loads(metadata_path.read_text())["selection"] != selection:
+    if metadata_path.exists() and json.loads(metadata_path.read_text(encoding="utf-8"))["selection"] != selection:
         raise ValueError("Run ID already uses different data, limits or model")
-    prior = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    prior = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
     metadata = {"selection": selection, "status": "replaying", "started_at": prior.get("started_at", datetime.now(timezone.utc).isoformat()), "judge_status": "not_configured", "users": 0, "sessions": 0, "questions": 0}
     metadata["execution"] = {"parallel_users": getattr(args, "workers", 1), "request_attempts": getattr(args, "attempts", 3), "request_journal": True, "session_order": "official_dataset_order"}
     save(metadata_path, metadata)
@@ -314,7 +314,7 @@ def score(args):
     if missing:
         raise ValueError("Configure the judge in .env before scoring: " + ", ".join(missing))
     output = CACHE / "results" / args.run_id
-    metadata = json.loads((output / "run.json").read_text())
+    metadata = json.loads((output / "run.json").read_text(encoding="utf-8"))
     if metadata["status"] != "artifacts_ready":
         raise ValueError("Complete corpus replay before scoring")
     artifact_hash = file_hash(output / "workbench_eval_results.jsonl")
